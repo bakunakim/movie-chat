@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Chat App</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div id="app">
+        <!-- Login Screen -->
+        <div id="login-screen" class="screen active">
+            <div class="login-form">
+                <h2>Log In</h2>
+                <input type="text" id="username-input" placeholder="Nickname" autocomplete="off">
+                <input type="password" id="password-input" placeholder="Password">
+                <button id="login-btn">Start Messaging</button>
+            </div>
+        </div>
+
+        <!-- Room List Screen -->
+        <div id="room-list-screen" class="screen">
+            <header>
+                <span>Chat Rooms</span>
+            </header>
+            <div id="rooms-container">
+                <!-- Room items go here -->
+            </div>
+            <button id="create-room-btn" class="fab">+</button>
+        </div>
+
+        <!-- Chat Room Screen -->
+        <div id="chat-room-screen" class="screen">
+            <header>
+                <button id="back-btn">&#8592;</button>
+                <span id="chat-title">Room Name</span>
+            </header>
+            <div id="messages-container">
+                <!-- Messages go here -->
+            </div>
+            <!-- Emoji Popup -->
+            <div id="emoji-popup" class="hidden"></div>
+
+            <div id="message-input-area">
+                <button id="emoji-btn">🍌</button>
+                <input type="text" id="message-input" placeholder="Message..." autocomplete="off">
+                <button id="send-btn">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="client.js"></script>
+</body>
+
+</html>
