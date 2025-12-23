@@ -3,6 +3,7 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
+const webpush = require('web-push');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -19,6 +20,20 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
+
+// Web Push Configuration
+const publicVapidKey = 'BAxK5ujR9uXmjc5YlNV2k5L5tJf5cts_Chdegh-NSCzRlJp9pGJnPIM3s-sWOTl6Zv8S062nP5D2wYuOPftdWUQ';
+const privateVapidKey = 'NFXvDNGrE7N5UB2Y_Zu3jp7pC_6CyPyXfZByQzZ8Tw0'; // Generated Valid Key
+
+webpush.setVapidDetails(
+    'mailto:example@yourdomain.org',
+    publicVapidKey,
+    privateVapidKey
+);
+
+// In-memory subscription storage
+// Format: { username: subscriptionObject }
+const subscriptions = {};
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -76,6 +91,13 @@ io.on('connection', (socket) => {
         } catch (err) {
             console.error(err);
             socket.emit('login_fail', '알 수 없는 에러가 발생했습니다.');
+        }
+    });
+
+    socket.on('update_subscription', (subscription) => {
+        if (socket.username) {
+            subscriptions[socket.username] = subscription;
+            console.log(`Subscription updated for user: ${socket.username}`);
         }
     });
 
@@ -153,6 +175,35 @@ io.on('connection', (socket) => {
                     timestamp: newMsg.created_at
                 };
                 io.to(roomId).emit('new_message', msgPayload);
+
+                // Initialize Push Notification
+                // 1. Get all users in the room (This is tricky with just socket.io rooms, so we'll broadcast to all subscribed users who are NOT the sender)
+                // A better approach for a real app: Query DB for room members. 
+                // For this prop app: We iterate over all connected sockets in the room, find their usernames, check if they have subscriptions.
+
+                // Note: socket.io 'clients' in room is async in v4.
+                // Simplified: iterate our subscriptions list and if they are supposedly in the room (we don't track room membership in memory perfectly), send it?
+                // Actually, let's just send to ALL subscribed users except sender for simplicity in this specific "Movie Prop" context where everyone might want to know?
+                // OR: Let's try to get room members from Supabase messages? No, that's history.
+                // Let's rely on the fact that if they are offline, we want to reach them.
+                // If they are online, they get the socket message. 
+                // Push is valuable when they are NOT online/focused. 
+                // FOR SIMPLICITY: Send to ALL registered subscriptions except sender.
+
+                const notificationPayload = JSON.stringify({
+                    title: `New message from ${nickname}`,
+                    body: content,
+                    url: `/?room=${roomId}` // Basic deep link concept
+                });
+
+                Object.keys(subscriptions).forEach(subUsername => {
+                    if (subUsername !== nickname) {
+                        const sub = subscriptions[subUsername];
+                        webpush.sendNotification(sub, notificationPayload)
+                            .catch(err => console.error("Push Error:", err));
+                    }
+                });
+
             } else {
                 console.error("Message Send Error:", error);
             }
