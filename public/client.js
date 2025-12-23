@@ -139,7 +139,7 @@ function urlBase64ToUint8Array(base64String) {
     }
     return outputArray;
 }
-});
+
 
 socket.on('login_fail', (msg) => {
     alert(msg);
