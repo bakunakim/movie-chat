@@ -80,44 +80,65 @@ socket.on('login_success', (username) => {
     showScreen('room-list-screen');
 
     // Register Service Worker and Subscribe to Push
-    if ('serviceWorker' in navigator && 'PushManager' in window) {
-        navigator.serviceWorker.register('/sw.js')
-            .then(function (swReg) {
-                console.log('Service Worker Registered', swReg);
+    // Moved to manual button click for iOS support
+});
 
-                const applicationServerKey = urlBase64ToUint8Array('BAxK5ujR9uXmjc5YlNV2k5L5tJf5cts_Chdegh-NSCzRlJp9pGJnPIM3s-sWOTl6Zv8S062nP5D2wYuOPftdWUQ');
-                swReg.pushManager.subscribe({
-                    userVisibleOnly: true,
-                    applicationServerKey: applicationServerKey
-                })
-                    .then(function (subscription) {
-                        console.log('User is subscribed:', subscription);
-                        socket.emit('update_subscription', subscription);
-                    })
-                    .catch(function (err) {
-                        console.log('Failed to subscribe the user: ', err);
-                    });
-            })
-            .catch(function (error) {
-                console.error('Service Worker Error', error);
+// Notification Button Logic
+const enableNotiBtn = document.getElementById('enable-noti-btn');
+
+enableNotiBtn.addEventListener('click', () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        alert('This browser does not support notifications.');
+        return;
+    }
+
+    Notification.requestPermission().then(permission => {
+        if (permission === 'granted') {
+            registerServiceWorker().then(() => {
+                alert('Notifications enabled!');
+                enableNotiBtn.style.display = 'none'; // Hide button after success
             });
-    }
-
-    // Helper function for VAPID key conversion
-    function urlBase64ToUint8Array(base64String) {
-        const padding = '='.repeat((4 - base64String.length % 4) % 4);
-        const base64 = (base64String + padding)
-            .replace(/\-/g, '+')
-            .replace(/_/g, '/');
-
-        const rawData = window.atob(base64);
-        const outputArray = new Uint8Array(rawData.length);
-
-        for (let i = 0; i < rawData.length; ++i) {
-            outputArray[i] = rawData.charCodeAt(i);
+        } else {
+            alert('Notification permission denied.');
         }
-        return outputArray;
+    });
+});
+
+function registerServiceWorker() {
+    return navigator.serviceWorker.register('/sw.js')
+        .then(function (swReg) {
+            console.log('Service Worker Registered', swReg);
+
+            const applicationServerKey = urlBase64ToUint8Array('BAxK5ujR9uXmjc5YlNV2k5L5tJf5cts_Chdegh-NSCzRlJp9pGJnPIM3s-sWOTl6Zv8S062nP5D2wYuOPftdWUQ');
+            return swReg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: applicationServerKey
+            });
+        })
+        .then(function (subscription) {
+            console.log('User is subscribed:', subscription);
+            socket.emit('update_subscription', subscription);
+        })
+        .catch(function (err) {
+            console.log('Failed to subscribe the user: ', err);
+        });
+}
+
+// Helper function for VAPID key conversion
+function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding)
+        .replace(/\-/g, '+')
+        .replace(/_/g, '/');
+
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+
+    for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
     }
+    return outputArray;
+}
 });
 
 socket.on('login_fail', (msg) => {
