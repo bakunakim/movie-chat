@@ -81,7 +81,41 @@ socket.on('login_success', (username) => {
 
     // Register Service Worker and Subscribe to Push
     // Moved to manual button click for iOS support
+
+    // ⭐ [Server Amnesia Fix] Restore existing subscription if available
+    restoreSubscription();
+
+    // ⭐ [Wake Lock] Keep screen on
+    requestWakeLock();
 });
+
+// ⭐ [Server Amnesia Fix]
+async function restoreSubscription() {
+    if ('serviceWorker' in navigator) {
+        try {
+            const register = await navigator.serviceWorker.ready;
+            const subscription = await register.pushManager.getSubscription();
+            if (subscription) {
+                console.log("Restoring existing subscription to server...");
+                socket.emit('update_subscription', subscription);
+            }
+        } catch (err) {
+            console.error("Error restoring subscription:", err);
+        }
+    }
+}
+
+// ⭐ [Wake Lock]
+async function requestWakeLock() {
+    try {
+        if ('wakeLock' in navigator) {
+            await navigator.wakeLock.request('screen');
+            console.log('Wake Lock active');
+        }
+    } catch (err) {
+        console.log('Wake Lock Error:', err);
+    }
+}
 
 // Notification Button Logic
 const enableNotiBtn = document.getElementById('enable-noti-btn');
