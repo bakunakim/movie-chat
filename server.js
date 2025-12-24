@@ -138,13 +138,29 @@ io.on('connection', (socket) => {
             // Normalize DB rows to match socket payload schema
             const { data: msgs } = await supabase.from('messages').select('*').eq('room_id', safeRid).order('created_at');
             if (msgs) {
-                const normalized = msgs.map(m => ({
-                    id: m.id,
-                    room_id: m.room_id,
-                    username: m.nickname,   // 1. Map nickname -> username
-                    content: m.content,
-                    timestamp: m.created_at // 2. Map created_at -> timestamp
-                }));
+                const normalized = msgs.map(m => {
+                    // ⭐ DYNAMIC HISTORY INJECTION
+                    // Keep history in sync with current Registry
+                    let finalContent = m.content;
+                    try {
+                        const p = JSON.parse(finalContent);
+                        const currentAvatar = characterProfiles[m.nickname];
+                        if (currentAvatar) {
+                            p.meta = p.meta || {};
+                            p.meta.avatar = currentAvatar;
+                            p.meta.nickname = m.nickname; // Ensure consistency
+                            finalContent = JSON.stringify(p);
+                        }
+                    } catch (e) { }
+
+                    return {
+                        id: m.id,
+                        room_id: m.room_id,
+                        username: m.nickname,   // 1. Map nickname -> username
+                        content: finalContent,  // 2. Injected Content
+                        timestamp: m.created_at // 3. Map created_at -> timestamp
+                    };
+                });
                 socket.emit('load_messages', normalized);
             }
         }
