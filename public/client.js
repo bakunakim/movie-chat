@@ -199,9 +199,10 @@ function sendMsg() {
     if (!txt || !currentRoomId) return;
 
     // We send MINIMAL meta, Server will inject authoritative Avatar
+    // BUT we also send it from Client as a BACKUP in case Server memory is empty.
     const meta = {
         nickname: currentUser,
-        // avatar: NOT sending from client state anymore (Server Injection Fix)
+        avatar: userAvatar || null, // ✅ BACKUP: Send what we have
         timestampOverride: settings.timeEnabled ? settings.timeValue : null
     };
 
