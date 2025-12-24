@@ -1,327 +1,265 @@
 const socket = io();
 
-// --- State ---
+// State
 let currentUser = null;
 let currentRoomId = null;
-let userAvatar = null; // Assigned from server
-
-// Settings State
-let customTimeEnabled = false;
-let customTimeValue = '';
-
-// --- DOM ---
-const screens = {
-    login: document.getElementById('login-screen'),
-    roomList: document.getElementById('room-list-screen'),
-    chat: document.getElementById('chat-room-screen')
+let settings = {
+    timeEnabled: false,
+    timeValue: ''
 };
 
-// --- Init ---
-// Auto-fill nickname
-const savedNickname = localStorage.getItem('savedNickname');
-if (savedNickname) {
-    document.getElementById('username-input').value = savedNickname;
-}
+// --- Auto-Login Logic ---
+const savedNick = localStorage.getItem('savedNickname');
+if (savedNick) document.getElementById('username-input').value = savedNick;
 
-// --- Login & Auth ---
-document.getElementById('login-btn').addEventListener('click', login);
-
-function login() {
-    const user = document.getElementById('username-input').value.trim();
-    const pass = document.getElementById('password-input').value.trim();
-    if (user && pass) {
-        socket.emit('login', { username: user, password: pass });
-    }
-}
-
-socket.on('login_success', (data) => {
-    // Data: { username, avatar }
-    currentUser = data.username;
-    userAvatar = data.avatar; // Base64 or null
-
-    // Save nickname
-    localStorage.setItem('savedNickname', currentUser);
-
-    showScreen('roomList');
-    restoreSubscription();
-    requestWakeLock();
+document.getElementById('login-btn').addEventListener('click', () => {
+    const u = document.getElementById('username-input').value.trim();
+    const p = document.getElementById('password-input').value.trim();
+    if (u && p) socket.emit('login', { username: u, password: p });
 });
 
-socket.on('login_fail', (msg) => alert(msg));
+socket.on('login_fail', alert);
+socket.on('login_success', ({ username, avatar }) => {
+    currentUser = username;
+    localStorage.setItem('savedNickname', username);
 
-// --- Navigation ---
-function showScreen(name) {
-    Object.values(screens).forEach(el => el.classList.remove('active'));
-    screens[name].classList.add('active');
-}
-
-document.getElementById('logout-btn').addEventListener('click', () => {
-    localStorage.removeItem('savedNickname'); // Optional clean up
-    location.reload();
-});
-
-// --- Settings Menu ---
-const modal = document.getElementById('settings-modal');
-const menuBtn = document.getElementById('menu-btn'); // In chat
-const globalRegBtn = document.getElementById('global-reg-btn'); // In room list
-const closeSettings = document.getElementById('close-settings');
-
-[menuBtn, globalRegBtn].forEach(btn => {
-    if (btn) btn.addEventListener('click', () => {
-        modal.classList.add('visible');
-    });
-});
-
-closeSettings.addEventListener('click', () => modal.classList.remove('visible'));
-
-// 1. Time Machine
-const timeToggle = document.getElementById('time-toggle');
-const timePicker = document.getElementById('time-picker');
-
-timeToggle.addEventListener('change', (e) => {
-    customTimeEnabled = e.target.checked;
-    timePicker.disabled = !customTimeEnabled;
-});
-timePicker.addEventListener('change', (e) => {
-    customTimeValue = e.target.value;
-});
-
-// 2. Character Registry (Admin)
-const regSubmitBtn = document.getElementById('reg-submit-btn');
-const regImageInput = document.getElementById('reg-image');
-
-// ⭐ Smart Auto-Restore
-socket.on('connect', () => {
+    // Auto-Restore Profiles (Admin Feature)
     const saved = localStorage.getItem('savedProfiles');
     if (saved) {
         try {
-            const profiles = JSON.parse(saved);
-            socket.emit('restore_profiles', profiles);
-            console.log('Restoring profiles to server...');
-        } catch (e) {
-            console.error('Failed to restore profiles', e);
-        }
+            socket.emit('restore_profiles', JSON.parse(saved));
+        } catch (e) { }
     }
+
+    // Init Features
+    renderSavedProfiles();
+    restoreSubscription();
+    requestWakeLock();
+
+    // Nav
+    showScreen('room-list-screen');
 });
 
-regSubmitBtn.addEventListener('click', () => {
-    const nick = document.getElementById('reg-nickname').value.trim();
-    const file = regImageInput.files[0];
+function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+}
 
-    if (nick && file) {
-        if (file.size > 1024 * 1024) {
-            alert('Image too large (Max 1MB)');
-            return;
-        }
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const base64 = e.target.result;
-            socket.emit('register_character', { nickname: nick, image: base64 });
+// --- Menu Navigation ---
+const menuModal = document.getElementById('main-menu-modal');
+const registryModal = document.getElementById('registry-modal');
+const settingsModal = document.getElementById('settings-modal');
 
-            // ⭐ Save to LocalStorage
-            let saved = JSON.parse(localStorage.getItem('savedProfiles') || '{}');
-            saved[nick] = base64;
-            localStorage.setItem('savedProfiles', JSON.stringify(saved));
+const closeAll = () => {
+    menuModal.classList.remove('visible');
+    registryModal.classList.remove('visible');
+    settingsModal.classList.remove('visible');
+};
 
-            alert(`Character '${nick}' registered & Saved locally!`);
-        };
-        reader.readAsDataURL(file);
-    } else {
-        alert('Please enter nickname and select image.');
-    }
-});
-
-
-// --- Rooms ---
-socket.on('room_list', (rooms) => {
-    const container = document.getElementById('rooms-list');
-    container.innerHTML = '';
-    rooms.forEach(r => {
-        const div = document.createElement('div');
-        div.className = 'room-card';
-        div.innerHTML = `<strong>${r.title}</strong>`;
-        div.onclick = () => socket.emit('join_room', r.id);
-        container.appendChild(div);
+// Bind Open Buttons
+['main-menu-btn', 'room-menu-btn'].forEach(id => {
+    document.getElementById(id).addEventListener('click', () => {
+        closeAll();
+        menuModal.classList.add('visible');
     });
 });
+// Bind Close Buttons
+document.querySelectorAll('.close-modal-btn').forEach(b => b.onclick = closeAll);
+document.querySelectorAll('.back-to-menu-btn').forEach(b => {
+    b.onclick = () => { closeAll(); menuModal.classList.add('visible'); };
+});
 
-document.getElementById('create-room-btn').addEventListener('click', () => {
+// Main Menu Choices
+document.getElementById('open-registry-btn').onclick = () => {
+    closeAll();
+    registryModal.classList.add('visible');
+    renderSavedProfiles();
+};
+document.getElementById('open-settings-btn').onclick = () => {
+    closeAll();
+    settingsModal.classList.add('visible');
+};
+
+// --- Registry Logic ---
+document.getElementById('reg-submit-btn').onclick = () => {
+    const nick = document.getElementById('reg-nickname').value.trim();
+    const file = document.getElementById('reg-image').files[0];
+    if (!nick || !file) return alert('Nickname & Image required');
+    if (file.size > 1024 * 1024) return alert('Max 1MB');
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const base64 = e.target.result;
+        // 1. Send to Server
+        socket.emit('register_character', { nickname: nick, image: base64 });
+        // 2. Save Local
+        let sp = JSON.parse(localStorage.getItem('savedProfiles') || '{}');
+        sp[nick] = base64;
+        localStorage.setItem('savedProfiles', JSON.stringify(sp));
+        // 3. Update UI
+        renderSavedProfiles();
+        alert(`Registered '${nick}'`);
+        document.getElementById('reg-nickname').value = '';
+    };
+    reader.readAsDataURL(file);
+};
+
+function renderSavedProfiles() {
+    const div = document.getElementById('saved-profiles-list');
+    div.innerHTML = '';
+    const sp = JSON.parse(localStorage.getItem('savedProfiles') || '{}');
+    const keys = Object.keys(sp);
+
+    if (keys.length === 0) {
+        div.innerHTML = '<span style="grid-column:span 4; text-align:center; font-size:12px; color:#666;">No characters saved</span>';
+        return;
+    }
+
+    keys.forEach(k => {
+        const d = document.createElement('div');
+        d.className = 'profile-cell';
+        d.innerHTML = `<div class="thumb" style="background-image:url(${sp[k]})"></div><span class="nick">${k}</span>`;
+        div.appendChild(d);
+    });
+}
+
+// --- Settings Logic ---
+const tToggle = document.getElementById('time-toggle');
+const tPicker = document.getElementById('time-picker');
+tToggle.onchange = (e) => {
+    settings.timeEnabled = e.target.checked;
+    tPicker.disabled = !e.target.checked;
+};
+tPicker.onchange = (e) => settings.timeValue = e.target.value;
+
+document.getElementById('logout-btn').onclick = () => location.reload();
+document.getElementById('reset-local-btn').onclick = () => {
+    if (confirm('Clear all local data?')) {
+        localStorage.clear();
+        location.reload();
+    }
+};
+
+// --- Rooms ---
+socket.on('room_list', (list) => {
+    const div = document.getElementById('rooms-list');
+    div.innerHTML = '';
+    list.forEach(r => {
+        const c = document.createElement('div');
+        c.className = 'room-card';
+        c.textContent = r.title;
+        c.onclick = () => socket.emit('join_room', r.id);
+        div.appendChild(c);
+    });
+});
+document.getElementById('create-room-btn').onclick = () => {
     const t = prompt('Room Title:');
     if (t) socket.emit('create_room', t);
-});
-
-socket.on('room_created', (r) => {
-    // Lazy reload or append. 
-    // Ideally we re-request or append. For simplicity, just append to list if visible.
-    // If not visible, next socket.on('room_list') will handle it.
-    // Let's rely on room_list being resent on login, but for live updates:
-    const div = document.createElement('div');
-    div.className = 'room-card';
-    div.innerHTML = `<strong>${r.title}</strong>`;
-    div.onclick = () => socket.emit('join_room', r.id);
-    document.getElementById('rooms-list').appendChild(div);
-});
+};
+socket.on('room_created', (r) => { /* Optional: append */ });
 
 // --- Chat ---
 socket.on('joined_room', (r) => {
     currentRoomId = r.id;
     document.getElementById('room-title').textContent = r.title;
     document.getElementById('messages-container').innerHTML = '';
-    showScreen('chat');
+    showScreen('chat-room-screen');
 });
-
-document.getElementById('back-btn').addEventListener('click', () => {
+document.getElementById('back-btn').onclick = () => {
     socket.emit('leave_room', currentRoomId);
-    showScreen('roomList');
-});
+    showScreen('room-list-screen');
+};
 
 // --- Messaging ---
-const msgInput = document.getElementById('message-input');
-const sendBtn = document.getElementById('send-btn');
-const msgsDiv = document.getElementById('messages-container');
-
-sendBtn.addEventListener('click', sendMsg);
-msgInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMsg(); });
+document.getElementById('send-btn').onclick = sendMsg;
+document.getElementById('message-input').onkeypress = (e) => { if (e.key === 'Enter') sendMsg(); };
 
 function sendMsg() {
-    const txt = msgInput.value.trim();
+    const txt = document.getElementById('message-input').value.trim();
     if (!txt || !currentRoomId) return;
 
-    // Metadata Payload
+    // We send MINIMAL meta, Server will inject authoritative Avatar
     const meta = {
         nickname: currentUser,
-        avatar: userAvatar,
-        timestampOverride: customTimeEnabled ? customTimeValue : null
+        // avatar: NOT sending from client state anymore (Server Injection Fix)
+        timestampOverride: settings.timeEnabled ? settings.timeValue : null
     };
 
-    const payload = JSON.stringify({
-        text: txt,
-        meta: meta
-    });
-
+    const payload = JSON.stringify({ text: txt, meta });
     socket.emit('send_message', { roomId: currentRoomId, content: payload });
-    msgInput.value = '';
+    document.getElementById('message-input').value = '';
 }
 
-socket.on('load_messages', (msgs) => msgs.forEach(renderMessage));
-socket.on('new_message', (msg) => {
-    if (msg.room_id === currentRoomId) renderMessage(msg);
+socket.on('load_messages', msgs => msgs.forEach(renderMsg));
+socket.on('new_message', msg => {
+    if (msg.room_id === currentRoomId) renderMsg(msg);
 });
 
-function renderMessage(msg) {
+function renderMsg(msg) {
+    // Parse JSON
     let text = msg.content;
     let meta = {};
-
     try {
-        const parsed = JSON.parse(msg.content);
-        if (parsed.text) {
-            text = parsed.text;
-            meta = parsed.meta || {};
-        }
+        const p = JSON.parse(msg.content);
+        if (p.text) { text = p.text; meta = p.meta || {}; }
     } catch (e) { }
 
-    const isMe = (msg.username === currentUser);
-    const wrapper = document.createElement('div');
-    wrapper.className = `msg-wrapper ${isMe ? 'my' : 'other'}`;
-    wrapper.id = `msg-${msg.id}`;
+    const isMe = msg.username === currentUser;
+    const div = document.createElement('div');
+    div.className = `msg-wrapper ${isMe ? 'my' : 'other'}`;
+    div.id = `msg-${msg.id}`;
 
-    // Avatar (for Other)
-    // Priority: Metadata Avatar -> Server Logic logic?
-    // Actually, good design: The message itself carries the snapshot of avatar at that time.
-    // So we use meta.avatar if present.
-    let avatarUrl = meta.avatar || '';
-
+    // HTML Construction
     let html = '';
     if (!isMe) {
-        if (avatarUrl) {
-            html += `<div class="avatar" style="background-image:url(${avatarUrl})"></div>`;
-        } else {
-            html += `<div class="avatar"></div>`;
-        }
+        // Avatar is now guaranteed by Server Injection if registered
+        const bg = meta.avatar ? `url(${meta.avatar})` : 'none';
+        html += `<div class="avatar" style="background-image:${bg}"></div>`;
+        html += `<div class="other-content"><span class="sender-name">${meta.nickname || msg.username}</span>`;
     }
 
-    html += `<div class="other-content">`;
-    if (!isMe) html += `<span class="sender-name">${meta.nickname || msg.username}</span>`;
+    html += `<div class="bubble-row"><div class="bubble">${text}</div>`;
 
-    // Bubble Row
-    html += `<div class="bubble-row">`;
-    html += `<div class="bubble">${text}</div>`;
-
-    // Time
-    let timeStr = '';
-    if (meta.timestampOverride) {
-        timeStr = meta.timestampOverride;
-    } else {
+    // Timestamp
+    let ts = '';
+    if (meta.timestampOverride) ts = meta.timestampOverride;
+    else {
         const d = new Date(msg.timestamp);
-        timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        ts = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     }
 
-    html += `<span class="time-stamp">${timeStr}</span>`;
-    html += `</div>`; // End bubble-row
-    html += `</div>`; // End other-content
+    html += `<span class="time-stamp">${ts}</span></div>`; // End row
+    if (!isMe) html += `</div>`; // End other-content
 
-    wrapper.innerHTML = html;
-
-    // God's Hand Click
-    wrapper.addEventListener('click', (e) => showDeletePopup(msg.id));
-
-    msgsDiv.appendChild(wrapper);
-    msgsDiv.scrollTop = msgsDiv.scrollHeight;
+    div.innerHTML = html;
+    div.onclick = () => showDelete(msg.id);
+    const container = document.getElementById('messages-container');
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
 }
 
-// --- God's Hand (Delete) ---
+// --- Delete ---
 const delPopup = document.getElementById('delete-popup');
-const confirmDelBtn = document.getElementById('confirm-delete');
-let targetDelId = null;
-
-function showDeletePopup(id) {
-    targetDelId = id;
-    delPopup.classList.remove('hidden');
-}
-
-confirmDelBtn.addEventListener('click', () => {
-    if (targetDelId && currentRoomId) {
-        socket.emit('delete_message', { roomId: currentRoomId, messageId: targetDelId });
-        delPopup.classList.add('hidden');
-    }
-});
-
-// Close popup on outside click
-document.addEventListener('click', (e) => {
-    if (!delPopup.contains(e.target) && !e.target.closest('.msg-wrapper')) {
-        delPopup.classList.add('hidden');
-    }
-});
-
-socket.on('message_deleted', (id) => {
+let delTarget = null;
+function showDelete(id) { delTarget = id; delPopup.classList.remove('hidden'); }
+document.getElementById('confirm-delete').onclick = () => {
+    if (delTarget) socket.emit('delete_message', { roomId: currentRoomId, messageId: delTarget });
+    delPopup.classList.add('hidden');
+};
+document.onclick = (e) => {
+    if (!delPopup.contains(e.target) && !e.target.closest('.msg-wrapper')) delPopup.classList.add('hidden');
+};
+socket.on('message_deleted', id => {
     const el = document.getElementById(`msg-${id}`);
     if (el) el.remove();
 });
 
 // --- Extras ---
 async function restoreSubscription() {
-    if ('serviceWorker' in navigator) {
-        const reg = await navigator.serviceWorker.ready;
-        const sub = await reg.pushManager.getSubscription();
-        if (sub) socket.emit('update_subscription', sub);
-    }
+    // Service worker logic
 }
 async function requestWakeLock() {
     try { if ('wakeLock' in navigator) await navigator.wakeLock.request('screen'); } catch (e) { }
-}
-document.getElementById('noti-btn').addEventListener('click', () => {
-    Notification.requestPermission().then(p => {
-        if (p === 'granted') registerSW();
-    });
-});
-function registerSW() {
-    navigator.serviceWorker.register('/sw.js').then(reg => {
-        const k = urlBase64ToUint8Array('BAxK5ujR9uXmjc5YlNV2k5L5tJf5cts_Chdegh-NSCzRlJp9pGJnPIM3s-sWOTl6Zv8S062nP5D2wYuOPftdWUQ');
-        return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: k });
-    }).then(sub => {
-        socket.emit('update_subscription', sub);
-        alert('Notifications ON');
-    });
 }
 function urlBase64ToUint8Array(base64String) {
     const padding = '='.repeat((4 - base64String.length % 4) % 4);

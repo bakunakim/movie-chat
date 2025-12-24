@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport"
         content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Casting Talk</title>
+    <title>Casting Talk Utils</title>
     <link rel="stylesheet" as="style" crossorigin
         href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
     <link rel="stylesheet" href="style.css">
@@ -16,78 +16,123 @@
 <body>
 
     <div id="app">
-
-        <!-- LOGIN SCREEN -->
+        <!-- LOGIN -->
         <div id="login-screen" class="screen active">
             <div class="login-box">
                 <div class="logo">🎬</div>
                 <h2>Casting Talk</h2>
-                <p style="color:#aaa; margin-bottom:20px; font-size:0.9rem;">High-End Production Messenger</p>
-                <input type="text" id="username-input" placeholder="Role Name (Character)" autocomplete="off">
+                <div class="desc">High-End Production Tool</div>
+                <input type="text" id="username-input" placeholder="Role Name" autocomplete="off">
                 <input type="password" id="password-input" placeholder="Password">
-                <button id="login-btn">ENTER</button>
+                <button id="login-btn">ENTER SCENE</button>
             </div>
         </div>
 
-        <!-- ROOM LIST SCREEN -->
+        <!-- ROOM LIST -->
         <div id="room-list-screen" class="screen">
             <header>
-                <div class="header-title">Chats</div>
-                <div class="header-actions">
-                    <button id="global-reg-btn">🎭</button> <!-- Character Registry Btn -->
-                    <button id="noti-btn">🔔</button>
-                </div>
+                <div class="header-title">Project Chats</div>
+                <!-- Hamburger Menu Button -->
+                <button id="main-menu-btn">☰</button>
             </header>
             <div id="rooms-list"></div>
             <button id="create-room-btn" class="fab">+</button>
         </div>
 
-        <!-- CHAT ROOM SCREEN -->
+        <!-- CHAT ROOM -->
         <div id="chat-room-screen" class="screen">
             <header>
                 <button id="back-btn">←</button>
                 <div class="header-title" id="room-title">Room</div>
-                <button id="menu-btn">☰</button>
+                <!-- Hamburger Menu Button (Same functionality) -->
+                <button id="room-menu-btn">☰</button>
             </header>
 
             <div id="messages-container"></div>
 
             <div id="input-area">
-                <button id="emoji-btn">😊</button>
+                <button id="emoji-btn">😄</button>
                 <input type="text" id="message-input" placeholder="Message..." autocomplete="off">
                 <button id="send-btn">➤</button>
             </div>
 
-            <!-- Emoji Popup (Hidden) -->
             <div id="emoji-popup" class="hidden"></div>
         </div>
-
     </div>
 
-    <!-- SETTINGS MODAL -->
+    <!-- 1. MAIN MENU MODAL (Group Select) -->
+    <div id="main-menu-modal" class="modal">
+        <div class="modal-content menu-content">
+            <div class="modal-header">
+                <span>Menu</span>
+                <button class="close-modal-btn">✕</button>
+            </div>
+            <div class="menu-grid">
+                <div id="open-registry-btn" class="menu-card">
+                    <div class="card-icon">🎭</div>
+                    <div class="card-title">캐릭터 관리</div>
+                    <div class="card-desc">Character Registry</div>
+                </div>
+                <div id="open-settings-btn" class="menu-card">
+                    <div class="card-icon">⚙️</div>
+                    <div class="card-title">촬영 설정</div>
+                    <div class="card-desc">Settings & Tools</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. REGISTRY MODAL -->
+    <div id="registry-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span>Character Registry</span>
+                <button class="back-to-menu-btn">←</button>
+            </div>
+
+            <!-- Registration Form -->
+            <div class="form-section">
+                <label>New Character</label>
+                <input type="text" id="reg-nickname" placeholder="Nickname">
+                <input type="file" id="reg-image" accept="image/*">
+                <button id="reg-submit-btn" class="action-btn">Register</button>
+            </div>
+
+            <!-- Registered List (Thumbnails) -->
+            <div class="list-section">
+                <label>Registered List (Local)</label>
+                <div id="saved-profiles-list" class="profiles-grid">
+                    <!-- JS Populated -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. SETTINGS MODAL -->
     <div id="settings-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
                 <span>Settings</span>
-                <button id="close-settings">✕</button>
+                <button class="back-to-menu-btn">←</button>
             </div>
 
-            <!-- Global Registry (Admin) -->
-            <div class="setting-item" id="registry-section">
-                <label>🎭 Character Registry (Admin)</label>
-                <input type="text" id="reg-nickname" placeholder="Character Name">
-                <input type="file" id="reg-image" accept="image/*" style="margin-top:5px;">
-                <button id="reg-submit-btn" class="action-btn" style="margin-top:5px;">Register Character</button>
-            </div>
-
-            <!-- Time Machine -->
             <div class="setting-item">
                 <label>🕒 Time Machine</label>
-                <div style="display:flex; gap:10px; align-items:center;">
-                    <input type="checkbox" id="time-toggle" style="width:20px; height:20px;">
-                    <input type="time" id="time-picker"
-                        style="background:#444; color:white; padding:5px; border-radius:5px;" disabled>
+                <div class="row">
+                    <input type="checkbox" id="time-toggle">
+                    <input type="time" id="time-picker" disabled>
                 </div>
+                <p class="hint">Fix message timestamps for filming</p>
+            </div>
+
+            <div class="setting-item">
+                <label>🔔 Notifications</label>
+                <button id="noti-btn" class="sub-btn">Allow Push</button>
+            </div>
+
+            <div class="setting-item delete-data-section">
+                <label>⚠️ Reset Data</label>
+                <button id="reset-local-btn" class="sub-btn warning">Clear Local Storage</button>
             </div>
 
             <button id="logout-btn" class="logout-btn">Log Out</button>
@@ -96,8 +141,8 @@
 
     <!-- GOD'S HAND DELETE POPUP -->
     <div id="delete-popup" class="delete-popup hidden">
-        <button id="confirm-delete" class="delete-btn">DELETE MESSAGE</button>
-        <div style="margin-top:10px; color:#aaa; font-size:0.8rem;">(God's Hand)</div>
+        <button id="confirm-delete" class="delete-btn">DELETE</button>
+        <div class="popup-desc">(God's Hand)</div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
