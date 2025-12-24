@@ -156,7 +156,27 @@ document.getElementById('create-room-btn').onclick = () => {
     const t = prompt('Room Title:');
     if (t) socket.emit('create_room', t);
 };
-socket.on('room_created', (r) => { /* Optional: append */ });
+socket.on('room_created', (r) => {
+    const div = document.getElementById('rooms-list');
+    if (div) {
+        const c = document.createElement('div');
+        c.className = 'room-card';
+        c.textContent = r.title;
+        c.onclick = () => socket.emit('join_room', r.id);
+        div.appendChild(c);
+    }
+});
+
+// ⭐ Scope-Safe Profile Update Listener
+socket.on('profile_updated', ({ nickname, image }) => {
+    // Only update elements that specifically match this nickname
+    const targets = document.querySelectorAll(`.avatar[data-sender="${nickname}"]`);
+    targets.forEach(el => {
+        el.style.backgroundImage = `url(${image})`;
+    });
+    // Also update registry list if visible
+    renderSavedProfiles();
+});
 
 // --- Chat ---
 socket.on('joined_room', (r) => {
@@ -229,8 +249,11 @@ function renderMsg(msg) {
     if (!isMe) {
         // Avatar: Server Injection Priority
         const bg = meta?.avatar ? `url(${meta.avatar})` : 'none';
-        html += `<div class="avatar" style="background-image:${bg}"></div>`;
-        html += `<div class="other-content"><span class="sender-name">${meta?.nickname || senderName}</span>`;
+
+        // ⭐ Add data-sender for targeted updates
+        const targetNick = meta?.nickname || senderName;
+        html += `<div class="avatar" data-sender="${targetNick}" style="background-image:${bg}"></div>`;
+        html += `<div class="other-content"><span class="sender-name">${targetNick}</span>`;
     }
 
     html += `<div class="bubble-row"><div class="bubble">${text}</div>`;
