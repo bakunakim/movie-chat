@@ -60,7 +60,8 @@ io.on('connection', (socket) => {
     // --- Registry ---
     socket.on('register_character', ({ nickname, image }) => {
         characterProfiles[nickname] = image;
-        // Broadcast update to all (optional, but good for real-time)
+        // Broadcast to all clients specifically for real-time UI updates
+        io.emit('profile_updated', { nickname, image });
     });
 
     socket.on('restore_profiles', (profiles) => {
