@@ -196,36 +196,57 @@ socket.on('new_message', msg => {
 });
 
 function renderMsg(msg) {
-    // Parse JSON
-    let text = msg.content;
+    if (!msg) return;
+
+    // 1. Safe JSON Parse
+    let text = msg.content || '';
     let meta = {};
     try {
-        const p = JSON.parse(msg.content);
-        if (p.text) { text = p.text; meta = p.meta || {}; }
-    } catch (e) { }
+        // Only parse if it looks like JSON
+        if (typeof text === 'string' && text.startsWith('{')) {
+            const p = JSON.parse(text);
+            if (p.text) {
+                text = p.text;
+                meta = p.meta || {};
+            }
+        }
+    } catch (e) {
+        // Fallback: Treat content as plain text if parse fails
+        // console.warn('JSON Parse Warning:', e);
+    }
 
-    const isMe = msg.username === currentUser;
+    // 2. Normalize Keys (Client Safety)
+    // Server now sends 'username', but we fallback to 'nickname' just in case.
+    const senderName = msg.username || msg.nickname || 'Unknown';
+    const isMe = (senderName === currentUser);
+
     const div = document.createElement('div');
     div.className = `msg-wrapper ${isMe ? 'my' : 'other'}`;
-    div.id = `msg-${msg.id}`;
+    div.id = `msg-${msg.id || Date.now()}`;
 
-    // HTML Construction
+    // 3. HTML Construction with Optional Chaining
     let html = '';
     if (!isMe) {
-        // Avatar is now guaranteed by Server Injection if registered
-        const bg = meta.avatar ? `url(${meta.avatar})` : 'none';
+        // Avatar: Server Injection Priority
+        const bg = meta?.avatar ? `url(${meta.avatar})` : 'none';
         html += `<div class="avatar" style="background-image:${bg}"></div>`;
-        html += `<div class="other-content"><span class="sender-name">${meta.nickname || msg.username}</span>`;
+        html += `<div class="other-content"><span class="sender-name">${meta?.nickname || senderName}</span>`;
     }
 
     html += `<div class="bubble-row"><div class="bubble">${text}</div>`;
 
-    // Timestamp
+    // 4. Timestamp Safety
     let ts = '';
-    if (meta.timestampOverride) ts = meta.timestampOverride;
-    else {
-        const d = new Date(msg.timestamp);
-        ts = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    if (meta?.timestampOverride) {
+        ts = meta.timestampOverride;
+    } else {
+        try {
+            const rawTime = msg.timestamp || msg.created_at || new Date().toISOString();
+            const d = new Date(rawTime);
+            ts = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        } catch (e) {
+            ts = '00:00';
+        }
     }
 
     html += `<span class="time-stamp">${ts}</span></div>`; // End row
@@ -233,9 +254,12 @@ function renderMsg(msg) {
 
     div.innerHTML = html;
     div.onclick = () => showDelete(msg.id);
+
     const container = document.getElementById('messages-container');
-    container.appendChild(div);
-    container.scrollTop = container.scrollHeight;
+    if (container) {
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
 }
 
 // --- Delete ---
