@@ -10,20 +10,19 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-// Supabase Setup
+// --- Supabase Setup ---
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
     console.error("Missing SUPABASE_URL or SUPABASE_KEY environment variables.");
-    // In production, we might want to exit, but for dev we'll just log
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Web Push Configuration
+// --- Web Push Configuration ---
 const publicVapidKey = 'BAxK5ujR9uXmjc5YlNV2k5L5tJf5cts_Chdegh-NSCzRlJp9pGJnPIM3s-sWOTl6Zv8S062nP5D2wYuOPftdWUQ';
-const privateVapidKey = 'NFXvDNGrE7N5UB2Y_Zu3jp7pC_6CyPyXfZByQzZ8Tw0'; // Generated Valid Key
+const privateVapidKey = 'NFXvDNGrE7N5UB2Y_Zu3jp7pC_6CyPyXfZByQzZ8Tw0';
 
 webpush.setVapidDetails(
     'mailto:example@yourdomain.org',
@@ -31,121 +30,119 @@ webpush.setVapidDetails(
     privateVapidKey
 );
 
-// In-memory subscription storage
-// Format: { username: subscriptionObject }
-const subscriptions = {};
+// --- In-Memory Stores ---
+const subscriptions = {}; // { username: subscriptionObject }
+
+// ⭐ Global Character Registry (Global Profile Registry)
+// Format: { "nickname": "base64_image_string" }
+const characterProfiles = {};
 
 app.use(express.static(path.join(__dirname, 'public')));
 
 io.on('connection', (socket) => {
     console.log('New client connected');
 
+    // --- Login ---
     socket.on('login', async ({ username, password }) => {
-        // Logic: First-come, First-served
         try {
-            // 1. DB Lookup for existence
+            // 1. Check DB
             const { data: user, error } = await supabase
                 .from('users')
                 .select('*')
                 .eq('nickname', username)
                 .single();
 
-            if (error && error.code !== 'PGRST116') { // PGRST116 is 'not found'
-                console.error("Login Check Error:", error);
+            if (error && error.code !== 'PGRST116') {
                 socket.emit('login_fail', '서버 에러가 발생했습니다.');
                 return;
             }
 
+            let loginSuccess = false;
+
             if (!user) {
-                // CASE A: New User (First claim)
+                // New User (Auto-Signup)
                 const { error: createError } = await supabase
                     .from('users')
                     .insert([{ nickname: username, password: password }]);
 
-                if (createError) {
-                    console.error("Signup Error:", createError);
-                    socket.emit('login_fail', '회원가입 실패 (이미 존재하는 닉네임일 수 있습니다.)');
-                    return;
+                if (!createError) loginSuccess = true;
+            } else {
+                // Existing User
+                if (user.password === password) loginSuccess = true;
+            }
+
+            if (loginSuccess) {
+                socket.username = username;
+
+                // ⭐ Check Registry for Auto-Profile
+                let assignedAvatar = null;
+                if (characterProfiles[username]) {
+                    assignedAvatar = characterProfiles[username];
                 }
 
-                socket.username = username;
-                socket.emit('login_success', username); // Client handles this
-                // Optional: Send a notification message like "New user joined!" if needed, 
-                // but prop usually just enters quietly or shows "Auto-signup" alert? 
-                // User asked for response: "새로운 아이디로 자동 가입되었습니다." -> Client handles alert loop?
-                // Or I can emit a separate event or just success. 
-                // Client `socket.on('login_success')` just switches screen. 
-                // I will keep standard success emission.
-
+                socket.emit('login_success', { username, avatar: assignedAvatar });
                 sendRoomList(socket);
             } else {
-                // CASE B: Existing User
-                if (user.password === password) {
-                    socket.username = username;
-                    socket.emit('login_success', username);
-                    sendRoomList(socket);
-                } else {
-                    socket.emit('login_fail', '이미 누군가 사용 중인 아이디이며, 비밀번호가 틀렸습니다.');
-                }
+                socket.emit('login_fail', '로그인 실패: 비밀번호가 틀렸거나 오류가 발생했습니다.');
             }
+
         } catch (err) {
             console.error(err);
-            socket.emit('login_fail', '알 수 없는 에러가 발생했습니다.');
+            socket.emit('login_fail', '알 수 없는 서버 에러.');
+        }
+    });
+
+    // --- Registry Management ---
+    socket.on('register_character', ({ nickname, image }) => {
+        // Admin feature mostly, but open to all for this prop
+        characterProfiles[nickname] = image;
+        console.log(`Character Registered: ${nickname}`);
+    });
+
+    // ⭐ Smart Restore (Client -> Server)
+    socket.on('restore_profiles', (profiles) => {
+        if (profiles && typeof profiles === 'object') {
+            Object.assign(characterProfiles, profiles);
+            console.log(`Restored ${Object.keys(profiles).length} profiles from client.`);
         }
     });
 
     socket.on('update_subscription', (subscription) => {
         if (socket.username) {
             subscriptions[socket.username] = subscription;
-            console.log(`Subscription updated for user: ${socket.username}`);
         }
     });
 
+    // --- Rooms ---
     socket.on('create_room', async (title) => {
-        try {
-            const { data, error } = await supabase
-                .from('rooms')
-                .insert([{ title: title }])
-                .select();
-
-            if (!error && data) {
-                // Broadcast to all
-                io.emit('room_created', { id: data[0].id, title: data[0].title });
-            }
-        } catch (err) {
-            console.error(err);
+        const { data, error } = await supabase.from('rooms').insert([{ title }]).select();
+        if (!error && data) {
+            io.emit('room_created', { id: data[0].id, title: data[0].title });
         }
     });
 
     socket.on('join_room', async (roomId) => {
         socket.join(roomId);
-
-        // Get Room Title
-        const { data: room, error } = await supabase
-            .from('rooms')
-            .select('title')
-            .eq('id', roomId)
-            .single();
-
+        const { data: room } = await supabase.from('rooms').select('title').eq('id', roomId).single();
         if (room) {
             socket.emit('joined_room', { id: roomId, title: room.title });
 
-            // Load messages
-            const { data: messages, error: msgError } = await supabase
+            const { data: messages } = await supabase
                 .from('messages')
                 .select('*')
                 .eq('room_id', roomId)
                 .order('created_at', { ascending: true });
 
-            if (!msgError) {
-                const formattedMessages = messages.map(m => ({
+            if (messages) {
+                // Map to cleaner format
+                const formatted = messages.map(m => ({
                     id: m.id,
                     room_id: m.room_id,
                     username: m.nickname,
                     content: m.content,
                     timestamp: m.created_at
                 }));
-                socket.emit('load_messages', formattedMessages);
+                socket.emit('load_messages', formatted);
             }
         }
     });
@@ -154,15 +151,14 @@ io.on('connection', (socket) => {
         socket.leave(roomId);
     });
 
+    // --- Messaging ---
     socket.on('send_message', async ({ roomId, content }) => {
         if (!socket.username) return;
-
-        const nickname = socket.username;
 
         try {
             const { data, error } = await supabase
                 .from('messages')
-                .insert([{ room_id: roomId, nickname: nickname, content: content }])
+                .insert([{ room_id: roomId, nickname: socket.username, content }])
                 .select();
 
             if (!error && data) {
@@ -176,58 +172,45 @@ io.on('connection', (socket) => {
                 };
                 io.to(roomId).emit('new_message', msgPayload);
 
-                // Initialize Push Notification
-                // 1. Get all users in the room (This is tricky with just socket.io rooms, so we'll broadcast to all subscribed users who are NOT the sender)
-                // A better approach for a real app: Query DB for room members. 
-                // For this prop app: We iterate over all connected sockets in the room, find their usernames, check if they have subscriptions.
+                // Push Notification
+                let bodyText = content;
+                try {
+                    const parsed = JSON.parse(content);
+                    if (parsed.text) bodyText = parsed.text;
+                } catch (e) { }
 
-                // Note: socket.io 'clients' in room is async in v4.
-                // Simplified: iterate our subscriptions list and if they are supposedly in the room (we don't track room membership in memory perfectly), send it?
-                // Actually, let's just send to ALL subscribed users except sender for simplicity in this specific "Movie Prop" context where everyone might want to know?
-                // OR: Let's try to get room members from Supabase messages? No, that's history.
-                // Let's rely on the fact that if they are offline, we want to reach them.
-                // If they are online, they get the socket message. 
-                // Push is valuable when they are NOT online/focused. 
-                // FOR SIMPLICITY: Send to ALL registered subscriptions except sender.
-
-                const notificationPayload = JSON.stringify({
-                    title: `New message from ${nickname}`,
-                    body: content,
-                    url: `/?room=${roomId}` // Basic deep link concept
+                const notif = JSON.stringify({
+                    title: socket.username,
+                    body: bodyText,
+                    url: `/?room=${roomId}`
                 });
 
-                Object.keys(subscriptions).forEach(subUsername => {
-                    if (subUsername !== nickname) {
-                        const sub = subscriptions[subUsername];
-                        webpush.sendNotification(sub, notificationPayload)
-                            .catch(err => console.error("Push Error:", err));
+                Object.keys(subscriptions).forEach(u => {
+                    if (u !== socket.username) {
+                        webpush.sendNotification(subscriptions[u], notif).catch(e => console.error(e));
                     }
                 });
-
-            } else {
-                console.error("Message Send Error:", error);
             }
-        } catch (err) {
-            console.error(err);
+        } catch (e) {
+            console.error(e);
         }
     });
 
-    socket.on('disconnect', () => {
-        console.log('Client disconnected');
+    // --- God's Hand (Delete) ---
+    socket.on('delete_message', async ({ roomId, messageId }) => {
+        const { error } = await supabase.from('messages').delete().eq('id', messageId);
+        if (!error) {
+            io.to(roomId).emit('message_deleted', messageId);
+        }
     });
+
+    socket.on('disconnect', () => { });
 });
 
 async function sendRoomList(socket) {
-    const { data: rooms, error } = await supabase
-        .from('rooms')
-        .select('*');
-
-    if (!error) {
-        socket.emit('room_list', rooms);
-    }
+    const { data: rooms } = await supabase.from('rooms').select('*');
+    if (rooms) socket.emit('room_list', rooms);
 }
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+server.listen(PORT, () => console.log(`Server running on ${PORT}`));
