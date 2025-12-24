@@ -87,9 +87,14 @@ io.on('connection', (socket) => {
             // Inject/Override Avatar
             parsed.meta = parsed.meta || {};
             parsed.meta.nickname = socket.username;
+
+            // ✅ HYBRID STRATEGY:
+            // 1. If Server has it (Admin registered), use it (Authority).
+            // 2. If Server missing (Restart), use what Client sent (Backup).
             if (serverAvatar) {
-                parsed.meta.avatar = serverAvatar; // Source of Truth
+                parsed.meta.avatar = serverAvatar;
             }
+            // else: keep parsed.meta.avatar from client
 
             finalContent = JSON.stringify(parsed);
 
