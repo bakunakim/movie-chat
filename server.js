@@ -13,204 +13,159 @@ const io = socketIo(server);
 // --- Supabase Setup ---
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
-
-if (!supabaseUrl || !supabaseKey) {
-    console.error("Missing SUPABASE_URL or SUPABASE_KEY environment variables.");
-}
-
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// --- Web Push Configuration ---
+// --- Web Push ---
 const publicVapidKey = 'BAxK5ujR9uXmjc5YlNV2k5L5tJf5cts_Chdegh-NSCzRlJp9pGJnPIM3s-sWOTl6Zv8S062nP5D2wYuOPftdWUQ';
 const privateVapidKey = 'NFXvDNGrE7N5UB2Y_Zu3jp7pC_6CyPyXfZByQzZ8Tw0';
 
-webpush.setVapidDetails(
-    'mailto:example@yourdomain.org',
-    publicVapidKey,
-    privateVapidKey
-);
+webpush.setVapidDetails('mailto:example@yourdomain.org', publicVapidKey, privateVapidKey);
 
-// --- In-Memory Stores ---
-const subscriptions = {}; // { username: subscriptionObject }
-
-// ⭐ Global Character Registry (Global Profile Registry)
-// Format: { "nickname": "base64_image_string" }
-const characterProfiles = {};
+const subscriptions = {};
+const characterProfiles = {}; // { "nickname": "base64..." }
 
 app.use(express.static(path.join(__dirname, 'public')));
 
 io.on('connection', (socket) => {
-    console.log('New client connected');
 
     // --- Login ---
     socket.on('login', async ({ username, password }) => {
         try {
-            // 1. Check DB
-            const { data: user, error } = await supabase
-                .from('users')
-                .select('*')
-                .eq('nickname', username)
-                .single();
+            const { data: user, error } = await supabase.from('users').select('*').eq('nickname', username).single();
 
-            if (error && error.code !== 'PGRST116') {
-                socket.emit('login_fail', '서버 에러가 발생했습니다.');
-                return;
-            }
-
-            let loginSuccess = false;
-
+            // Auto-signup logic
+            let success = false;
             if (!user) {
-                // New User (Auto-Signup)
-                const { error: createError } = await supabase
-                    .from('users')
-                    .insert([{ nickname: username, password: password }]);
-
-                if (!createError) loginSuccess = true;
-            } else {
-                // Existing User
-                if (user.password === password) loginSuccess = true;
+                const { error: createErr } = await supabase.from('users').insert([{ nickname: username, password }]);
+                if (!createErr) success = true;
+            } else if (user.password === password) {
+                success = true;
             }
 
-            if (loginSuccess) {
+            if (success) {
                 socket.username = username;
-
-                // ⭐ Check Registry for Auto-Profile
-                let assignedAvatar = null;
-                if (characterProfiles[username]) {
-                    assignedAvatar = characterProfiles[username];
-                }
-
-                socket.emit('login_success', { username, avatar: assignedAvatar });
+                // Send current avatar from registry if exists
+                const avatar = characterProfiles[username] || null;
+                socket.emit('login_success', { username, avatar });
                 sendRoomList(socket);
             } else {
-                socket.emit('login_fail', '로그인 실패: 비밀번호가 틀렸거나 오류가 발생했습니다.');
-            }
-
-        } catch (err) {
-            console.error(err);
-            socket.emit('login_fail', '알 수 없는 서버 에러.');
-        }
-    });
-
-    // --- Registry Management ---
-    socket.on('register_character', ({ nickname, image }) => {
-        // Admin feature mostly, but open to all for this prop
-        characterProfiles[nickname] = image;
-        console.log(`Character Registered: ${nickname}`);
-    });
-
-    // ⭐ Smart Restore (Client -> Server)
-    socket.on('restore_profiles', (profiles) => {
-        if (profiles && typeof profiles === 'object') {
-            Object.assign(characterProfiles, profiles);
-            console.log(`Restored ${Object.keys(profiles).length} profiles from client.`);
-        }
-    });
-
-    socket.on('update_subscription', (subscription) => {
-        if (socket.username) {
-            subscriptions[socket.username] = subscription;
-        }
-    });
-
-    // --- Rooms ---
-    socket.on('create_room', async (title) => {
-        const { data, error } = await supabase.from('rooms').insert([{ title }]).select();
-        if (!error && data) {
-            io.emit('room_created', { id: data[0].id, title: data[0].title });
-        }
-    });
-
-    socket.on('join_room', async (roomId) => {
-        socket.join(roomId);
-        const { data: room } = await supabase.from('rooms').select('title').eq('id', roomId).single();
-        if (room) {
-            socket.emit('joined_room', { id: roomId, title: room.title });
-
-            const { data: messages } = await supabase
-                .from('messages')
-                .select('*')
-                .eq('room_id', roomId)
-                .order('created_at', { ascending: true });
-
-            if (messages) {
-                // Map to cleaner format
-                const formatted = messages.map(m => ({
-                    id: m.id,
-                    room_id: m.room_id,
-                    username: m.nickname,
-                    content: m.content,
-                    timestamp: m.created_at
-                }));
-                socket.emit('load_messages', formatted);
-            }
-        }
-    });
-
-    socket.on('leave_room', (roomId) => {
-        socket.leave(roomId);
-    });
-
-    // --- Messaging ---
-    socket.on('send_message', async ({ roomId, content }) => {
-        if (!socket.username) return;
-
-        try {
-            const { data, error } = await supabase
-                .from('messages')
-                .insert([{ room_id: roomId, nickname: socket.username, content }])
-                .select();
-
-            if (!error && data) {
-                const newMsg = data[0];
-                const msgPayload = {
-                    id: newMsg.id,
-                    room_id: newMsg.room_id,
-                    username: newMsg.nickname,
-                    content: newMsg.content,
-                    timestamp: newMsg.created_at
-                };
-                io.to(roomId).emit('new_message', msgPayload);
-
-                // Push Notification
-                let bodyText = content;
-                try {
-                    const parsed = JSON.parse(content);
-                    if (parsed.text) bodyText = parsed.text;
-                } catch (e) { }
-
-                const notif = JSON.stringify({
-                    title: socket.username,
-                    body: bodyText,
-                    url: `/?room=${roomId}`
-                });
-
-                Object.keys(subscriptions).forEach(u => {
-                    if (u !== socket.username) {
-                        webpush.sendNotification(subscriptions[u], notif).catch(e => console.error(e));
-                    }
-                });
+                socket.emit('login_fail', 'Login Failed');
             }
         } catch (e) {
             console.error(e);
+            socket.emit('login_fail', 'Server Error');
         }
     });
 
-    // --- God's Hand (Delete) ---
+    // --- Registry ---
+    socket.on('register_character', ({ nickname, image }) => {
+        characterProfiles[nickname] = image;
+        // Broadcast update to all (optional, but good for real-time)
+    });
+
+    socket.on('restore_profiles', (profiles) => {
+        if (profiles && typeof profiles === 'object') {
+            Object.assign(characterProfiles, profiles);
+            console.log(`[Server] Restored ${Object.keys(profiles).length} profiles.`);
+        }
+    });
+
+    // --- Messaging (CRITICAL FIX) ---
+    socket.on('send_message', async ({ roomId, content }) => {
+        if (!socket.username) return;
+
+        // 1. Force Server-Side Avatar Lookup
+        let finalContent = content;
+        try {
+            // Content is expected to be JSON string from client
+            const parsed = JSON.parse(content);
+
+            // Check Registry
+            const serverAvatar = characterProfiles[socket.username];
+
+            // Inject/Override Avatar
+            parsed.meta = parsed.meta || {};
+            parsed.meta.nickname = socket.username;
+            if (serverAvatar) {
+                parsed.meta.avatar = serverAvatar; // Source of Truth
+            }
+
+            finalContent = JSON.stringify(parsed);
+
+        } catch (e) {
+            // If content wasn't JSON, we leave it (legacy support), 
+            // but for this app we strictly use JSON now.
+        }
+
+        // 2. Save to DB
+        const { data, error } = await supabase
+            .from('messages')
+            .insert([{ room_id: roomId, nickname: socket.username, content: finalContent }])
+            .select();
+
+        if (!error && data) {
+            const newMsg = data[0];
+            const payload = {
+                id: newMsg.id,
+                room_id: newMsg.room_id,
+                username: newMsg.nickname,
+                content: newMsg.content, // Includes the injected avatar
+                timestamp: newMsg.created_at
+            };
+            io.to(roomId).emit('new_message', payload);
+
+            // Push Notification
+            sendPush(socket.username, finalContent, roomId);
+        }
+    });
+
+    // --- Rooms & Delete ---
+    socket.on('create_room', async (t) => {
+        const { data } = await supabase.from('rooms').insert([{ title: t }]).select();
+        if (data) io.emit('room_created', data[0]);
+    });
+
+    socket.on('join_room', async (rid) => {
+        socket.join(rid);
+        const { data: room } = await supabase.from('rooms').select('title').eq('id', rid).single();
+        if (room) {
+            socket.emit('joined_room', { id: rid, title: room.title });
+            const { data: msgs } = await supabase.from('messages').select('*').eq('room_id', rid).order('created_at');
+            if (msgs) socket.emit('load_messages', msgs);
+        }
+    });
+
+    socket.on('leave_room', (rid) => socket.leave(rid));
+
     socket.on('delete_message', async ({ roomId, messageId }) => {
         const { error } = await supabase.from('messages').delete().eq('id', messageId);
-        if (!error) {
-            io.to(roomId).emit('message_deleted', messageId);
-        }
+        if (!error) io.to(roomId).emit('message_deleted', messageId);
     });
 
-    socket.on('disconnect', () => { });
+    // --- Push ---
+    socket.on('update_subscription', (sub) => {
+        if (socket.username) subscriptions[socket.username] = sub;
+    });
+
+    function sendPush(sender, contentRaw, roomId) {
+        let text = "New Message";
+        try {
+            const p = JSON.parse(contentRaw);
+            if (p.text) text = p.text;
+        } catch (e) { text = contentRaw; }
+
+        const payload = JSON.stringify({ title: sender, body: text, url: `/?room=${roomId}` });
+
+        Object.keys(subscriptions).forEach(u => {
+            if (u !== sender) webpush.sendNotification(subscriptions[u], payload).catch(e => { });
+        });
+    }
 });
 
 async function sendRoomList(socket) {
-    const { data: rooms } = await supabase.from('rooms').select('*');
-    if (rooms) socket.emit('room_list', rooms);
+    const { data } = await supabase.from('rooms').select('*');
+    if (data) socket.emit('room_list', data);
 }
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on ${PORT}`));
+server.listen(PORT, () => console.log(`Running on ${PORT}`));
