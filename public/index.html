@@ -3,57 +3,101 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Chat App</title>
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Casting Talk</title>
+    <link rel="stylesheet" as="style" crossorigin
+        href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
     <link rel="stylesheet" href="style.css">
     <link rel="manifest" href="/manifest.json">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1b2e">
 </head>
 
 <body>
+
     <div id="app">
-        <!-- Login Screen -->
+
+        <!-- LOGIN SCREEN -->
         <div id="login-screen" class="screen active">
-            <div class="login-form">
-                <h2>Log In</h2>
-                <input type="text" id="username-input" placeholder="Nickname" autocomplete="off">
+            <div class="login-box">
+                <div class="logo">🎬</div>
+                <h2>Casting Talk</h2>
+                <p style="color:#aaa; margin-bottom:20px; font-size:0.9rem;">High-End Production Messenger</p>
+                <input type="text" id="username-input" placeholder="Role Name (Character)" autocomplete="off">
                 <input type="password" id="password-input" placeholder="Password">
-                <button id="login-btn">Start Messaging</button>
+                <button id="login-btn">ENTER</button>
             </div>
         </div>
 
-        <!-- Room List Screen -->
+        <!-- ROOM LIST SCREEN -->
         <div id="room-list-screen" class="screen">
             <header>
-                <span>Chat Rooms</span>
-                <button id="enable-noti-btn"
-                    style="float: right; background: none; border: none; font-size: 1.2rem; cursor: pointer;">🔔</button>
+                <div class="header-title">Chats</div>
+                <div class="header-actions">
+                    <button id="global-reg-btn">🎭</button> <!-- Character Registry Btn -->
+                    <button id="noti-btn">🔔</button>
+                </div>
             </header>
-            <div id="rooms-container">
-                <!-- Room items go here -->
-            </div>
+            <div id="rooms-list"></div>
             <button id="create-room-btn" class="fab">+</button>
         </div>
 
-        <!-- Chat Room Screen -->
+        <!-- CHAT ROOM SCREEN -->
         <div id="chat-room-screen" class="screen">
             <header>
-                <button id="back-btn">&#8592;</button>
-                <span id="chat-title">Room Name</span>
+                <button id="back-btn">←</button>
+                <div class="header-title" id="room-title">Room</div>
+                <button id="menu-btn">☰</button>
             </header>
-            <div id="messages-container">
-                <!-- Messages go here -->
-            </div>
-            <!-- Emoji Popup -->
-            <div id="emoji-popup" class="hidden"></div>
 
-            <div id="message-input-area">
-                <button id="emoji-btn">🍌</button>
+            <div id="messages-container"></div>
+
+            <div id="input-area">
+                <button id="emoji-btn">😊</button>
                 <input type="text" id="message-input" placeholder="Message..." autocomplete="off">
-                <button id="send-btn">Send</button>
+                <button id="send-btn">➤</button>
             </div>
+
+            <!-- Emoji Popup (Hidden) -->
+            <div id="emoji-popup" class="hidden"></div>
         </div>
+
+    </div>
+
+    <!-- SETTINGS MODAL -->
+    <div id="settings-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span>Settings</span>
+                <button id="close-settings">✕</button>
+            </div>
+
+            <!-- Global Registry (Admin) -->
+            <div class="setting-item" id="registry-section">
+                <label>🎭 Character Registry (Admin)</label>
+                <input type="text" id="reg-nickname" placeholder="Character Name">
+                <input type="file" id="reg-image" accept="image/*" style="margin-top:5px;">
+                <button id="reg-submit-btn" class="action-btn" style="margin-top:5px;">Register Character</button>
+            </div>
+
+            <!-- Time Machine -->
+            <div class="setting-item">
+                <label>🕒 Time Machine</label>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <input type="checkbox" id="time-toggle" style="width:20px; height:20px;">
+                    <input type="time" id="time-picker"
+                        style="background:#444; color:white; padding:5px; border-radius:5px;" disabled>
+                </div>
+            </div>
+
+            <button id="logout-btn" class="logout-btn">Log Out</button>
+        </div>
+    </div>
+
+    <!-- GOD'S HAND DELETE POPUP -->
+    <div id="delete-popup" class="delete-popup hidden">
+        <button id="confirm-delete" class="delete-btn">DELETE MESSAGE</button>
+        <div style="margin-top:10px; color:#aaa; font-size:0.8rem;">(God's Hand)</div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>

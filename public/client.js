@@ -1,274 +1,333 @@
 const socket = io();
 
-// State
+// --- State ---
 let currentUser = null;
 let currentRoomId = null;
+let userAvatar = null; // Assigned from server
 
-// Nano Banana SVGs
-const BANANA_SVGS = {
-    '::banana-happy::': `<svg viewBox="0 0 100 100" class="emoji-img"><path d="M20,80 Q50,10 80,80" fill="#FFE135" stroke="black" stroke-width="2"/><circle cx="35" cy="45" r="5" fill="black"/><circle cx="65" cy="45" r="5" fill="black"/><path d="M35,60 Q50,75 65,60" fill="none" stroke="black" stroke-width="3"/></svg>`,
-    '::banana-angry::': `<svg viewBox="0 0 100 100" class="emoji-img"><path d="M20,80 Q50,10 80,80" fill="#FF6B6B" stroke="black" stroke-width="2"/><path d="M30,40 L45,50" stroke="black" stroke-width="3"/><path d="M70,40 L55,50" stroke="black" stroke-width="3"/><circle cx="35" cy="55" r="3" fill="black"/><circle cx="65" cy="55" r="3" fill="black"/><path d="M40,75 Q50,65 60,75" fill="none" stroke="black" stroke-width="3"/></svg>`,
-    '::banana-love::': `<svg viewBox="0 0 100 100" class="emoji-img"><path d="M20,80 Q50,10 80,80" fill="#FFE135" stroke="black" stroke-width="2"/><path d="M30,45 Q35,35 40,45 Q45,35 50,45 L40,60 Z" fill="#FF4081"/><path d="M60,45 Q65,35 70,45 Q75,35 80,45 L70,60 Z" fill="#FF4081"/><path d="M40,70 Q50,80 60,70" fill="none" stroke="black" stroke-width="3"/></svg>`,
-    '::banana-sad::': `<svg viewBox="0 0 100 100" class="emoji-img"><path d="M20,80 Q50,10 80,80" fill="#81D4FA" stroke="black" stroke-width="2"/><circle cx="35" cy="50" r="4" fill="black"/><circle cx="65" cy="50" r="4" fill="black"/><path d="M40,75 Q50,65 60,75" fill="none" stroke="black" stroke-width="3"/><circle cx="25" cy="60" r="3" fill="#29B6F6"/><circle cx="75" cy="60" r="3" fill="#29B6F6"/></svg>`,
-    '::banana-cool::': `<svg viewBox="0 0 100 100" class="emoji-img"><path d="M20,80 Q50,10 80,80" fill="#FFE135" stroke="black" stroke-width="2"/><path d="M25,45 L75,45 L70,60 L30,60 Z" fill="black"/><path d="M25,45 Q50,40 75,45" fill="none" stroke="black" stroke-width="2"/><path d="M40,75 Q50,80 60,75" fill="none" stroke="black" stroke-width="3"/></svg>`
+// Settings State
+let customTimeEnabled = false;
+let customTimeValue = '';
+
+// --- DOM ---
+const screens = {
+    login: document.getElementById('login-screen'),
+    roomList: document.getElementById('room-list-screen'),
+    chat: document.getElementById('chat-room-screen')
 };
 
-// DOM Elements
-const loginScreen = document.getElementById('login-screen');
-const roomListScreen = document.getElementById('room-list-screen');
-const chatRoomScreen = document.getElementById('chat-room-screen');
-
-const usernameInput = document.getElementById('username-input');
-const passwordInput = document.getElementById('password-input');
-const loginBtn = document.getElementById('login-btn');
-
-const roomsContainer = document.getElementById('rooms-container');
-const createRoomBtn = document.getElementById('create-room-btn');
-
-const chatTitle = document.getElementById('chat-title');
-const messagesContainer = document.getElementById('messages-container');
-const messageInput = document.getElementById('message-input');
-const sendBtn = document.getElementById('send-btn');
-const backBtn = document.getElementById('back-btn');
-
-const emojiBtn = document.getElementById('emoji-btn');
-const emojiPopup = document.getElementById('emoji-popup');
-
-// Init Emoji Popup
-Object.keys(BANANA_SVGS).forEach(key => {
-    const div = document.createElement('div');
-    div.className = 'emoji-option';
-    div.innerHTML = BANANA_SVGS[key]; // Render SVG preview
-    div.addEventListener('click', () => {
-        if (currentRoomId) {
-            socket.emit('send_message', { roomId: currentRoomId, content: key });
-            emojiPopup.classList.add('hidden');
-        }
-    });
-    emojiPopup.appendChild(div);
-});
-
-emojiBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    emojiPopup.classList.toggle('hidden');
-});
-
-// Close popup on click outside
-document.addEventListener('click', (e) => {
-    if (!emojiPopup.contains(e.target) && e.target !== emojiBtn) {
-        emojiPopup.classList.add('hidden');
-    }
-});
-
-// Navigation
-function showScreen(screenId) {
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById(screenId).classList.add('active');
+// --- Init ---
+// Auto-fill nickname
+const savedNickname = localStorage.getItem('savedNickname');
+if (savedNickname) {
+    document.getElementById('username-input').value = savedNickname;
 }
 
-// Login
-loginBtn.addEventListener('click', () => {
-    const username = usernameInput.value.trim();
-    const password = passwordInput.value.trim();
-    if (username && password) {
-        socket.emit('login', { username, password });
+// --- Login & Auth ---
+document.getElementById('login-btn').addEventListener('click', login);
+
+function login() {
+    const user = document.getElementById('username-input').value.trim();
+    const pass = document.getElementById('password-input').value.trim();
+    if (user && pass) {
+        socket.emit('login', { username: user, password: pass });
     }
-});
+}
 
-socket.on('login_success', (username) => {
-    currentUser = username;
-    showScreen('room-list-screen');
+socket.on('login_success', (data) => {
+    // Data: { username, avatar }
+    currentUser = data.username;
+    userAvatar = data.avatar; // Base64 or null
 
-    // Register Service Worker and Subscribe to Push
-    // Moved to manual button click for iOS support
+    // Save nickname
+    localStorage.setItem('savedNickname', currentUser);
 
-    // ⭐ [Server Amnesia Fix] Restore existing subscription if available
+    showScreen('roomList');
     restoreSubscription();
-
-    // ⭐ [Wake Lock] Keep screen on
     requestWakeLock();
 });
 
-// ⭐ [Server Amnesia Fix]
-async function restoreSubscription() {
-    if ('serviceWorker' in navigator) {
+socket.on('login_fail', (msg) => alert(msg));
+
+// --- Navigation ---
+function showScreen(name) {
+    Object.values(screens).forEach(el => el.classList.remove('active'));
+    screens[name].classList.add('active');
+}
+
+document.getElementById('logout-btn').addEventListener('click', () => {
+    localStorage.removeItem('savedNickname'); // Optional clean up
+    location.reload();
+});
+
+// --- Settings Menu ---
+const modal = document.getElementById('settings-modal');
+const menuBtn = document.getElementById('menu-btn'); // In chat
+const globalRegBtn = document.getElementById('global-reg-btn'); // In room list
+const closeSettings = document.getElementById('close-settings');
+
+[menuBtn, globalRegBtn].forEach(btn => {
+    if (btn) btn.addEventListener('click', () => {
+        modal.classList.add('visible');
+    });
+});
+
+closeSettings.addEventListener('click', () => modal.classList.remove('visible'));
+
+// 1. Time Machine
+const timeToggle = document.getElementById('time-toggle');
+const timePicker = document.getElementById('time-picker');
+
+timeToggle.addEventListener('change', (e) => {
+    customTimeEnabled = e.target.checked;
+    timePicker.disabled = !customTimeEnabled;
+});
+timePicker.addEventListener('change', (e) => {
+    customTimeValue = e.target.value;
+});
+
+// 2. Character Registry (Admin)
+const regSubmitBtn = document.getElementById('reg-submit-btn');
+const regImageInput = document.getElementById('reg-image');
+
+// ⭐ Smart Auto-Restore
+socket.on('connect', () => {
+    const saved = localStorage.getItem('savedProfiles');
+    if (saved) {
         try {
-            const register = await navigator.serviceWorker.ready;
-            const subscription = await register.pushManager.getSubscription();
-            if (subscription) {
-                console.log("Restoring existing subscription to server...");
-                socket.emit('update_subscription', subscription);
-            }
-        } catch (err) {
-            console.error("Error restoring subscription:", err);
+            const profiles = JSON.parse(saved);
+            socket.emit('restore_profiles', profiles);
+            console.log('Restoring profiles to server...');
+        } catch (e) {
+            console.error('Failed to restore profiles', e);
         }
     }
-}
-
-// ⭐ [Wake Lock]
-async function requestWakeLock() {
-    try {
-        if ('wakeLock' in navigator) {
-            await navigator.wakeLock.request('screen');
-            console.log('Wake Lock active');
-        }
-    } catch (err) {
-        console.log('Wake Lock Error:', err);
-    }
-}
-
-// Notification Button Logic
-const enableNotiBtn = document.getElementById('enable-noti-btn');
-
-enableNotiBtn.addEventListener('click', () => {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        alert('This browser does not support notifications.');
-        return;
-    }
-
-    Notification.requestPermission().then(permission => {
-        if (permission === 'granted') {
-            registerServiceWorker().then(() => {
-                alert('Notifications enabled!');
-                enableNotiBtn.style.display = 'none'; // Hide button after success
-            });
-        } else {
-            alert('Notification permission denied.');
-        }
-    });
 });
 
-function registerServiceWorker() {
-    return navigator.serviceWorker.register('/sw.js')
-        .then(function (swReg) {
-            console.log('Service Worker Registered', swReg);
+regSubmitBtn.addEventListener('click', () => {
+    const nick = document.getElementById('reg-nickname').value.trim();
+    const file = regImageInput.files[0];
 
-            const applicationServerKey = urlBase64ToUint8Array('BAxK5ujR9uXmjc5YlNV2k5L5tJf5cts_Chdegh-NSCzRlJp9pGJnPIM3s-sWOTl6Zv8S062nP5D2wYuOPftdWUQ');
-            return swReg.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: applicationServerKey
-            });
-        })
-        .then(function (subscription) {
-            console.log('User is subscribed:', subscription);
-            socket.emit('update_subscription', subscription);
-        })
-        .catch(function (err) {
-            console.log('Failed to subscribe the user: ', err);
-        });
-}
+    if (nick && file) {
+        if (file.size > 1024 * 1024) {
+            alert('Image too large (Max 1MB)');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const base64 = e.target.result;
+            socket.emit('register_character', { nickname: nick, image: base64 });
 
-// Helper function for VAPID key conversion
-function urlBase64ToUint8Array(base64String) {
-    const padding = '='.repeat((4 - base64String.length % 4) % 4);
-    const base64 = (base64String + padding)
-        .replace(/\-/g, '+')
-        .replace(/_/g, '/');
+            // ⭐ Save to LocalStorage
+            let saved = JSON.parse(localStorage.getItem('savedProfiles') || '{}');
+            saved[nick] = base64;
+            localStorage.setItem('savedProfiles', JSON.stringify(saved));
 
-    const rawData = window.atob(base64);
-    const outputArray = new Uint8Array(rawData.length);
-
-    for (let i = 0; i < rawData.length; ++i) {
-        outputArray[i] = rawData.charCodeAt(i);
+            alert(`Character '${nick}' registered & Saved locally!`);
+        };
+        reader.readAsDataURL(file);
+    } else {
+        alert('Please enter nickname and select image.');
     }
-    return outputArray;
-}
-
-
-socket.on('login_fail', (msg) => {
-    alert(msg);
 });
 
-// Rooms
+
+// --- Rooms ---
 socket.on('room_list', (rooms) => {
-    roomsContainer.innerHTML = '';
-    rooms.forEach(room => {
+    const container = document.getElementById('rooms-list');
+    container.innerHTML = '';
+    rooms.forEach(r => {
         const div = document.createElement('div');
-        div.className = 'room-item';
-        div.textContent = room.title;
-        div.addEventListener('click', () => {
-            socket.emit('join_room', room.id);
-        });
-        roomsContainer.appendChild(div);
+        div.className = 'room-card';
+        div.innerHTML = `<strong>${r.title}</strong>`;
+        div.onclick = () => socket.emit('join_room', r.id);
+        container.appendChild(div);
     });
 });
 
-createRoomBtn.addEventListener('click', () => {
-    const title = prompt('Enter Room Name:');
-    if (title) {
-        socket.emit('create_room', title);
-    }
+document.getElementById('create-room-btn').addEventListener('click', () => {
+    const t = prompt('Room Title:');
+    if (t) socket.emit('create_room', t);
 });
 
-socket.on('room_created', (room) => {
+socket.on('room_created', (r) => {
+    // Lazy reload or append. 
+    // Ideally we re-request or append. For simplicity, just append to list if visible.
+    // If not visible, next socket.on('room_list') will handle it.
+    // Let's rely on room_list being resent on login, but for live updates:
     const div = document.createElement('div');
-    div.className = 'room-item';
-    div.textContent = room.title;
-    div.addEventListener('click', () => {
-        socket.emit('join_room', room.id);
+    div.className = 'room-card';
+    div.innerHTML = `<strong>${r.title}</strong>`;
+    div.onclick = () => socket.emit('join_room', r.id);
+    document.getElementById('rooms-list').appendChild(div);
+});
+
+// --- Chat ---
+socket.on('joined_room', (r) => {
+    currentRoomId = r.id;
+    document.getElementById('room-title').textContent = r.title;
+    document.getElementById('messages-container').innerHTML = '';
+    showScreen('chat');
+});
+
+document.getElementById('back-btn').addEventListener('click', () => {
+    socket.emit('leave_room', currentRoomId);
+    showScreen('roomList');
+});
+
+// --- Messaging ---
+const msgInput = document.getElementById('message-input');
+const sendBtn = document.getElementById('send-btn');
+const msgsDiv = document.getElementById('messages-container');
+
+sendBtn.addEventListener('click', sendMsg);
+msgInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMsg(); });
+
+function sendMsg() {
+    const txt = msgInput.value.trim();
+    if (!txt || !currentRoomId) return;
+
+    // Metadata Payload
+    const meta = {
+        nickname: currentUser,
+        avatar: userAvatar,
+        timestampOverride: customTimeEnabled ? customTimeValue : null
+    };
+
+    const payload = JSON.stringify({
+        text: txt,
+        meta: meta
     });
-    roomsContainer.appendChild(div);
-});
 
-// Chat
-socket.on('joined_room', (room) => {
-    currentRoomId = room.id;
-    chatTitle.textContent = room.title;
-    messagesContainer.innerHTML = '';
-    showScreen('chat-room-screen');
-});
+    socket.emit('send_message', { roomId: currentRoomId, content: payload });
+    msgInput.value = '';
+}
 
-socket.on('load_messages', (messages) => {
-    messages.forEach(addMessage);
-});
-
+socket.on('load_messages', (msgs) => msgs.forEach(renderMessage));
 socket.on('new_message', (msg) => {
-    if (msg.room_id === currentRoomId) {
-        addMessage(msg);
-    }
+    if (msg.room_id === currentRoomId) renderMessage(msg);
 });
 
-function addMessage(msg) {
-    const isEmoji = BANANA_SVGS.hasOwnProperty(msg.content);
+function renderMessage(msg) {
+    let text = msg.content;
+    let meta = {};
 
-    // If emoji, add special class to remove bubble style if desired.
-    // We already have .my-msg / .other-msg for positioning.
-    // If it's a sticker, we might want to keep positioning but remove background.
+    try {
+        const parsed = JSON.parse(msg.content);
+        if (parsed.text) {
+            text = parsed.text;
+            meta = parsed.meta || {};
+        }
+    } catch (e) { }
 
-    const div = document.createElement('div');
-    div.className = `message ${msg.username === currentUser ? 'my-msg' : 'other-msg'} ${isEmoji ? 'emoji-msg' : ''}`;
+    const isMe = (msg.username === currentUser);
+    const wrapper = document.createElement('div');
+    wrapper.className = `msg-wrapper ${isMe ? 'my' : 'other'}`;
+    wrapper.id = `msg-${msg.id}`;
+
+    // Avatar (for Other)
+    // Priority: Metadata Avatar -> Server Logic logic?
+    // Actually, good design: The message itself carries the snapshot of avatar at that time.
+    // So we use meta.avatar if present.
+    let avatarUrl = meta.avatar || '';
 
     let html = '';
-    if (msg.username !== currentUser) {
-        html += `<span class="msg-sender">${msg.username}</span>`;
+    if (!isMe) {
+        if (avatarUrl) {
+            html += `<div class="avatar" style="background-image:url(${avatarUrl})"></div>`;
+        } else {
+            html += `<div class="avatar"></div>`;
+        }
     }
 
-    if (isEmoji) {
-        html += BANANA_SVGS[msg.content];
+    html += `<div class="other-content">`;
+    if (!isMe) html += `<span class="sender-name">${meta.nickname || msg.username}</span>`;
+
+    // Bubble Row
+    html += `<div class="bubble-row">`;
+    html += `<div class="bubble">${text}</div>`;
+
+    // Time
+    let timeStr = '';
+    if (meta.timestampOverride) {
+        timeStr = meta.timestampOverride;
     } else {
-        html += `<span class="msg-content">${msg.content}</span>`;
+        const d = new Date(msg.timestamp);
+        timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     }
 
-    div.innerHTML = html;
-    messagesContainer.appendChild(div);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    html += `<span class="time-stamp">${timeStr}</span>`;
+    html += `</div>`; // End bubble-row
+    html += `</div>`; // End other-content
+
+    wrapper.innerHTML = html;
+
+    // God's Hand Click
+    wrapper.addEventListener('click', (e) => showDeletePopup(msg.id));
+
+    msgsDiv.appendChild(wrapper);
+    msgsDiv.scrollTop = msgsDiv.scrollHeight;
 }
 
-sendBtn.addEventListener('click', sendMessage);
-messageInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') sendMessage();
+// --- God's Hand (Delete) ---
+const delPopup = document.getElementById('delete-popup');
+const confirmDelBtn = document.getElementById('confirm-delete');
+let targetDelId = null;
+
+function showDeletePopup(id) {
+    targetDelId = id;
+    delPopup.classList.remove('hidden');
+}
+
+confirmDelBtn.addEventListener('click', () => {
+    if (targetDelId && currentRoomId) {
+        socket.emit('delete_message', { roomId: currentRoomId, messageId: targetDelId });
+        delPopup.classList.add('hidden');
+    }
 });
 
-function sendMessage() {
-    const content = messageInput.value.trim();
-    if (content && currentRoomId) {
-        socket.emit('send_message', { roomId: currentRoomId, content });
-        messageInput.value = '';
+// Close popup on outside click
+document.addEventListener('click', (e) => {
+    if (!delPopup.contains(e.target) && !e.target.closest('.msg-wrapper')) {
+        delPopup.classList.add('hidden');
+    }
+});
+
+socket.on('message_deleted', (id) => {
+    const el = document.getElementById(`msg-${id}`);
+    if (el) el.remove();
+});
+
+// --- Extras ---
+async function restoreSubscription() {
+    if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) socket.emit('update_subscription', sub);
     }
 }
-
-backBtn.addEventListener('click', () => {
-    socket.emit('leave_room', currentRoomId);
-    currentRoomId = null;
-    showScreen('room-list-screen');
+async function requestWakeLock() {
+    try { if ('wakeLock' in navigator) await navigator.wakeLock.request('screen'); } catch (e) { }
+}
+document.getElementById('noti-btn').addEventListener('click', () => {
+    Notification.requestPermission().then(p => {
+        if (p === 'granted') registerSW();
+    });
 });
+function registerSW() {
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+        const k = urlBase64ToUint8Array('BAxK5ujR9uXmjc5YlNV2k5L5tJf5cts_Chdegh-NSCzRlJp9pGJnPIM3s-sWOTl6Zv8S062nP5D2wYuOPftdWUQ');
+        return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: k });
+    }).then(sub => {
+        socket.emit('update_subscription', sub);
+        alert('Notifications ON');
+    });
+}
+function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+    return outputArray;
+}
