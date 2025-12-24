@@ -127,11 +127,25 @@ io.on('connection', (socket) => {
 
     socket.on('join_room', async (rid) => {
         socket.join(rid);
-        const { data: room } = await supabase.from('rooms').select('title').eq('id', rid).single();
+        // Force string usage for consistency
+        const safeRid = String(rid);
+
+        const { data: room } = await supabase.from('rooms').select('title').eq('id', safeRid).single();
         if (room) {
-            socket.emit('joined_room', { id: rid, title: room.title });
-            const { data: msgs } = await supabase.from('messages').select('*').eq('room_id', rid).order('created_at');
-            if (msgs) socket.emit('load_messages', msgs);
+            socket.emit('joined_room', { id: safeRid, title: room.title });
+
+            // Normalize DB rows to match socket payload schema
+            const { data: msgs } = await supabase.from('messages').select('*').eq('room_id', safeRid).order('created_at');
+            if (msgs) {
+                const normalized = msgs.map(m => ({
+                    id: m.id,
+                    room_id: m.room_id,
+                    username: m.nickname,   // 1. Map nickname -> username
+                    content: m.content,
+                    timestamp: m.created_at // 2. Map created_at -> timestamp
+                }));
+                socket.emit('load_messages', normalized);
+            }
         }
     });
 
