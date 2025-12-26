@@ -5,6 +5,9 @@ const socketIo = require('socket.io');
 const path = require('path');
 const webpush = require('web-push');
 const { createClient } = require('@supabase/supabase-js');
+const cloudinary = require('cloudinary').v2;
+const multer = require('multer');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
 const app = express();
 const server = http.createServer(app);
@@ -15,6 +18,23 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// --- Cloudinary Setup ---
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'movie-chat-avatars',
+        allowed_formats: ['jpg', 'png', 'jpeg', 'gif', 'webp']
+    }
+});
+
+const upload = multer({ storage: storage });
+
 // --- Web Push ---
 const publicVapidKey = 'BAxK5ujR9uXmjc5YlNV2k5L5tJf5cts_Chdegh-NSCzRlJp9pGJnPIM3s-sWOTl6Zv8S062nP5D2wYuOPftdWUQ';
 const privateVapidKey = 'NFXvDNGrE7N5UB2Y_Zu3jp7pC_6CyPyXfZByQzZ8Tw0';
@@ -22,9 +42,39 @@ const privateVapidKey = 'NFXvDNGrE7N5UB2Y_Zu3jp7pC_6CyPyXfZByQzZ8Tw0';
 webpush.setVapidDetails('mailto:example@yourdomain.org', publicVapidKey, privateVapidKey);
 
 const subscriptions = {};
-const characterProfiles = {}; // { "nickname": "base64..." }
 
+// Ensure public directory is correct and static files are served
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json()); // Allow JSON body for non-file requests
+
+// --- Avatar Upload Endpoint ---
+app.post('/api/upload-avatar', upload.single('image'), async (req, res) => {
+    try {
+        const file = req.file;
+        const nickname = req.body.nickname;
+
+        if (!file || !nickname) {
+            return res.status(400).json({ error: 'Missing file or nickname' });
+        }
+
+        // Update User in Supabase with Cloudinary URL
+        const { error } = await supabase
+            .from('users')
+            .update({ avatar_url: file.path })
+            .eq('nickname', nickname);
+
+        if (error) throw error;
+
+        // Broadcast update to real-time clients
+        io.emit('profile_updated', { nickname, image: file.path });
+
+        res.json({ success: true, url: file.path });
+    } catch (err) {
+        console.error('Upload Error:', err);
+        res.status(500).json({ error: 'Upload failed' });
+    }
+});
+
 
 io.on('connection', (socket) => {
 
@@ -35,18 +85,20 @@ io.on('connection', (socket) => {
 
             // Auto-signup logic
             let success = false;
+            let avatarUrl = null;
+
             if (!user) {
+                // If user doesn't exist, create them
                 const { error: createErr } = await supabase.from('users').insert([{ nickname: username, password }]);
                 if (!createErr) success = true;
             } else if (user.password === password) {
                 success = true;
+                avatarUrl = user.avatar_url; // Load from DB
             }
 
             if (success) {
                 socket.username = username;
-                // Send current avatar from registry if exists
-                const avatar = characterProfiles[username] || null;
-                socket.emit('login_success', { username, avatar });
+                socket.emit('login_success', { username, avatar: avatarUrl });
                 sendRoomList(socket);
             } else {
                 socket.emit('login_fail', 'Login Failed');
@@ -57,53 +109,36 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- Registry ---
-    socket.on('register_character', ({ nickname, image }) => {
-        characterProfiles[nickname] = image;
-        // Broadcast to all clients specifically for real-time UI updates
-        io.emit('profile_updated', { nickname, image });
-    });
+    // --- Registry (Legacy/Socket fallbacks removed or simplified) ---
+    // The main upload logic is now handled via POST /api/upload-avatar
 
-    socket.on('restore_profiles', (profiles) => {
-        if (profiles && typeof profiles === 'object') {
-            Object.assign(characterProfiles, profiles);
-            console.log(`[Server] Restored ${Object.keys(profiles).length} profiles.`);
-        }
-    });
-
-    // --- Messaging (CRITICAL FIX) ---
+    // --- Messaging ---
     socket.on('send_message', async ({ roomId, content }) => {
         if (!socket.username) return;
 
-        // 1. Force Server-Side Avatar Lookup
         let finalContent = content;
+
+        // Fetch latest avatar from DB (Authority)
+        // We can optimize this by caching on socket, but DB is safer for persistence
+        let userAvatar = null;
         try {
-            // Content is expected to be JSON string from client
+            const { data: u } = await supabase.from('users').select('avatar_url').eq('nickname', socket.username).single();
+            if (u) userAvatar = u.avatar_url;
+        } catch (e) { }
+
+        try {
             const parsed = JSON.parse(content);
-
-            // Check Registry
-            const serverAvatar = characterProfiles[socket.username];
-
-            // Inject/Override Avatar
             parsed.meta = parsed.meta || {};
             parsed.meta.nickname = socket.username;
 
-            // ✅ HYBRID STRATEGY:
-            // 1. If Server has it (Admin registered), use it (Authority).
-            // 2. If Server missing (Restart), use what Client sent (Backup).
-            if (serverAvatar) {
-                parsed.meta.avatar = serverAvatar;
+            // Inject Authority Avatar
+            if (userAvatar) {
+                parsed.meta.avatar = userAvatar;
             }
-            // else: keep parsed.meta.avatar from client
-
             finalContent = JSON.stringify(parsed);
+        } catch (e) { }
 
-        } catch (e) {
-            // If content wasn't JSON, we leave it (legacy support), 
-            // but for this app we strictly use JSON now.
-        }
-
-        // 2. Save to DB
+        // Save to DB
         const { data, error } = await supabase
             .from('messages')
             .insert([{ room_id: roomId, nickname: socket.username, content: finalContent }])
@@ -115,7 +150,7 @@ io.on('connection', (socket) => {
                 id: newMsg.id,
                 room_id: newMsg.room_id,
                 username: newMsg.nickname,
-                content: newMsg.content, // Includes the injected avatar
+                content: newMsg.content,
                 timestamp: newMsg.created_at
             };
             io.to(roomId).emit('new_message', payload);
@@ -133,39 +168,27 @@ io.on('connection', (socket) => {
 
     socket.on('join_room', async (rid) => {
         socket.join(rid);
-        // Force string usage for consistency
         const safeRid = String(rid);
 
         const { data: room } = await supabase.from('rooms').select('title').eq('id', safeRid).single();
         if (room) {
             socket.emit('joined_room', { id: safeRid, title: room.title });
 
-            // Normalize DB rows to match socket payload schema
             const { data: msgs } = await supabase.from('messages').select('*').eq('room_id', safeRid).order('created_at');
             if (msgs) {
-                const normalized = msgs.map(m => {
-                    // ⭐ DYNAMIC HISTORY INJECTION
-                    // Keep history in sync with current Registry
-                    let finalContent = m.content;
-                    try {
-                        const p = JSON.parse(finalContent);
-                        const currentAvatar = characterProfiles[m.nickname];
-                        if (currentAvatar) {
-                            p.meta = p.meta || {};
-                            p.meta.avatar = currentAvatar;
-                            p.meta.nickname = m.nickname; // Ensure consistency
-                            finalContent = JSON.stringify(p);
-                        }
-                    } catch (e) { }
+                // We need to inject current avatars for history too (optional but good for consistency)
+                // For performance, we might skip bulk fetching all users or rely on what's in content.
+                // Best effort: rely on content for history, but if we wanted "live" avatars we'd need a join.
+                // Keeping original logic which relied on 'characterProfiles' but that's gone.
+                // We will rely on the embedded content.
 
-                    return {
-                        id: m.id,
-                        room_id: m.room_id,
-                        username: m.nickname,   // 1. Map nickname -> username
-                        content: finalContent,  // 2. Injected Content
-                        timestamp: m.created_at // 3. Map created_at -> timestamp
-                    };
-                });
+                const normalized = msgs.map(m => ({
+                    id: m.id,
+                    room_id: m.room_id,
+                    username: m.nickname,
+                    content: m.content,
+                    timestamp: m.created_at
+                }));
                 socket.emit('load_messages', normalized);
             }
         }
