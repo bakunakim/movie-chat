@@ -176,19 +176,46 @@ io.on('connection', (socket) => {
 
             const { data: msgs } = await supabase.from('messages').select('*').eq('room_id', safeRid).order('created_at');
             if (msgs) {
-                // We need to inject current avatars for history too (optional but good for consistency)
-                // For performance, we might skip bulk fetching all users or rely on what's in content.
-                // Best effort: rely on content for history, but if we wanted "live" avatars we'd need a join.
-                // Keeping original logic which relied on 'characterProfiles' but that's gone.
-                // We will rely on the embedded content.
+                // Collect unique nicknames involved in this history
+                const nicknames = [...new Set(msgs.map(m => m.nickname))];
 
-                const normalized = msgs.map(m => ({
-                    id: m.id,
-                    room_id: m.room_id,
-                    username: m.nickname,
-                    content: m.content,
-                    timestamp: m.created_at
-                }));
+                // Fetch latest avatars for these users
+                const { data: users } = await supabase
+                    .from('users')
+                    .select('nickname, avatar_url')
+                    .in('nickname', nicknames);
+
+                // Create a lookup map: { nickname: avatar_url }
+                const avatarMap = {};
+                if (users) {
+                    users.forEach(u => {
+                        if (u.avatar_url) avatarMap[u.nickname] = u.avatar_url;
+                    });
+                }
+
+                // Inject auth avatars into the message content
+                const normalized = msgs.map(m => {
+                    let finalContent = m.content;
+                    try {
+                        const parsed = JSON.parse(m.content);
+                        // If we have a fresh avatar for this user, inject it
+                        if (avatarMap[m.nickname]) {
+                            parsed.meta = parsed.meta || {};
+                            parsed.meta.avatar = avatarMap[m.nickname];
+                            // Re-serialize to string as client expects string content
+                            finalContent = JSON.stringify(parsed);
+                        }
+                    } catch (e) { }
+
+                    return {
+                        id: m.id,
+                        room_id: m.room_id,
+                        username: m.nickname,
+                        content: finalContent,
+                        timestamp: m.created_at
+                    };
+                });
+
                 socket.emit('load_messages', normalized);
             }
         }
