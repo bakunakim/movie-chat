@@ -262,8 +262,9 @@ function renderMsg(msg) {
     // 3. HTML Construction with Optional Chaining
     let html = '';
     if (!isMe) {
-        // Avatar: Server Injection Priority
-        const bg = meta?.avatar ? `url(${meta.avatar})` : 'none';
+        // Avatar: Server Injection Priority (Top Level > Meta Content)
+        const finalAvatar = msg.avatar || meta?.avatar;
+        const bg = finalAvatar ? `url(${finalAvatar})` : 'none';
 
         // ⭐ Add data-sender for targeted updates
         const targetNick = meta?.nickname || senderName;
