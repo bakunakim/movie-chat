@@ -23,12 +23,11 @@ socket.on('login_success', ({ username, avatar }) => {
     currentUser = username;
     localStorage.setItem('savedNickname', username);
 
-    // Auto-Restore Profiles (Admin Feature)
-    const saved = localStorage.getItem('savedProfiles');
-    if (saved) {
-        try {
-            socket.emit('restore_profiles', JSON.parse(saved));
-        } catch (e) { }
+    // Sync Server Avatar to Local Storage (Persistence Fix)
+    if (avatar) {
+        let sp = JSON.parse(localStorage.getItem('savedProfiles') || '{}');
+        sp[username] = avatar;
+        localStorage.setItem('savedProfiles', JSON.stringify(sp));
     }
 
     // Init Features
@@ -81,27 +80,42 @@ document.getElementById('open-settings-btn').onclick = () => {
 };
 
 // --- Registry Logic ---
-document.getElementById('reg-submit-btn').onclick = () => {
+document.getElementById('reg-submit-btn').onclick = async () => {
     const nick = document.getElementById('reg-nickname').value.trim();
     const file = document.getElementById('reg-image').files[0];
     if (!nick || !file) return alert('Nickname & Image required');
-    if (file.size > 1024 * 1024) return alert('Max 1MB');
+    if (file.size > 5 * 1024 * 1024) return alert('Max 5MB');
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        const base64 = e.target.result;
-        // 1. Send to Server
-        socket.emit('register_character', { nickname: nick, image: base64 });
-        // 2. Save Local
-        let sp = JSON.parse(localStorage.getItem('savedProfiles') || '{}');
-        sp[nick] = base64;
-        localStorage.setItem('savedProfiles', JSON.stringify(sp));
-        // 3. Update UI
-        renderSavedProfiles();
-        alert(`Registered '${nick}'`);
-        document.getElementById('reg-nickname').value = '';
-    };
-    reader.readAsDataURL(file);
+    const formData = new FormData();
+    formData.append('nickname', nick);
+    formData.append('image', file);
+
+    try {
+        const res = await fetch('/api/upload-avatar', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            // Save to Local Storage so it appears in the list
+            let sp = JSON.parse(localStorage.getItem('savedProfiles') || '{}');
+            sp[nick] = data.url;
+            localStorage.setItem('savedProfiles', JSON.stringify(sp));
+
+            // Update UI
+            renderSavedProfiles();
+
+            alert(`Registered '${nick}' with Cloudinary!`);
+            document.getElementById('reg-nickname').value = '';
+            document.getElementById('reg-image').value = '';
+        } else {
+            alert('Upload failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        console.error(e);
+        alert('Error uploading image');
+    }
 };
 
 function renderSavedProfiles() {
