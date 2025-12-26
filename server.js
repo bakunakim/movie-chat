@@ -193,28 +193,14 @@ io.on('connection', (socket) => {
                     });
                 }
 
-                // Inject auth avatars into the message content
-                const normalized = msgs.map(m => {
-                    let finalContent = m.content;
-                    try {
-                        const parsed = JSON.parse(m.content);
-                        // If we have a fresh avatar for this user, inject it
-                        if (avatarMap[m.nickname]) {
-                            parsed.meta = parsed.meta || {};
-                            parsed.meta.avatar = avatarMap[m.nickname];
-                            // Re-serialize to string as client expects string content
-                            finalContent = JSON.stringify(parsed);
-                        }
-                    } catch (e) { }
-
-                    return {
-                        id: m.id,
-                        room_id: m.room_id,
-                        username: m.nickname,
-                        content: finalContent,
-                        timestamp: m.created_at
-                    };
-                });
+                const normalized = msgs.map(m => ({
+                    id: m.id,
+                    room_id: m.room_id,
+                    username: m.nickname,
+                    content: m.content,
+                    timestamp: m.created_at,
+                    avatar: avatarMap[m.nickname] || null
+                }));
 
                 socket.emit('load_messages', normalized);
             }
