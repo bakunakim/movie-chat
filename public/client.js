@@ -3,6 +3,7 @@ const socket = io();
 // State
 let currentUser = null;
 let currentRoomId = null;
+const emojis = ["😀", "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊", "😋", "😎", "😍", "😘", "🥰", "😗", "😙", "😚", "🙂", "🤗", "🤩", "🤔", "🤨", "😐", "😑", "😶", "🙄", "😏", "😣", "😥", "😮", "🤐", "😯", "😪", "😫", "😴", "😌", "😛", "😜", "😝", "🤤", "😒", "😓", "😔", "😕", "🙃", "🤑", "😲", "☹️", "🙁", "😖", "😞", "😟", "😤", "😢", "😭", "😦", "😧", "😨", "😩", "🤯", "😬", "😰", "😱", "🥵", "🥶", "😳", "🤪", "😵", "😡", "😠", "🤬", "😷", "🤒", "🤕", "🤢", "🤮", "🤧", "😇", "🥳", "🥺", "🤠", "🤡", "🤥", "🤫", "🤭", "🧐", "🤓", "😈", "👿", "👹", "👺", "💀", "👻", "👽", "🤖", "💩", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿", "😾"];
 let settings = {
     timeEnabled: false,
     timeValue: ''
@@ -205,8 +206,52 @@ document.getElementById('back-btn').onclick = () => {
 };
 
 // --- Messaging ---
-document.getElementById('send-btn').onclick = sendMsg;
-document.getElementById('message-input').onkeypress = (e) => { if (e.key === 'Enter') sendMsg(); };
+// --- Messaging ---
+// Fix: Use addEventListener for better reliability
+const sendBtn = document.getElementById('send-btn');
+const msgInput = document.getElementById('message-input');
+const emojiBtn = document.getElementById('emoji-btn');
+const emojiPopup = document.getElementById('emoji-popup');
+
+if (sendBtn) sendBtn.addEventListener('click', sendMsg);
+
+if (msgInput) {
+    msgInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendMsg();
+    });
+}
+
+// Emoji Button Logic
+if (emojiBtn && emojiPopup) {
+    // 1. Populate if empty
+    if (emojiPopup.innerHTML === '') {
+        emojis.forEach(e => {
+            const span = document.createElement('span');
+            span.textContent = e;
+            span.className = 'emoji-item';
+            span.onclick = () => {
+                msgInput.value += e;
+                msgInput.focus();
+                emojiPopup.classList.add('hidden');
+            };
+            emojiPopup.appendChild(span);
+        });
+    }
+
+    // 2. Toggle Visibility
+    emojiBtn.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent document click from closing immediately
+        emojiPopup.classList.toggle('hidden');
+    });
+
+    // 3. Close on outside click
+    document.addEventListener('click', (e) => {
+        if (!emojiPopup.contains(e.target) && e.target !== emojiBtn) {
+            emojiPopup.classList.add('hidden');
+        }
+    });
+}
+
 
 function sendMsg() {
     const txt = document.getElementById('message-input').value.trim();
