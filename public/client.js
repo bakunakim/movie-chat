@@ -207,17 +207,29 @@ document.getElementById('back-btn').onclick = () => {
 
 // --- Messaging ---
 // --- Messaging ---
-// Fix: Use addEventListener for better reliability
+// --- Messaging ---
 const sendBtn = document.getElementById('send-btn');
 const msgInput = document.getElementById('message-input');
 const emojiBtn = document.getElementById('emoji-btn');
 const emojiPopup = document.getElementById('emoji-popup');
 
-if (sendBtn) sendBtn.addEventListener('click', sendMsg);
+// Robust Event Listener Attachment
+if (sendBtn) {
+    // Remove old listeners to prevent duplicates if any
+    const newBtn = sendBtn.cloneNode(true);
+    sendBtn.parentNode.replaceChild(newBtn, sendBtn);
+    newBtn.addEventListener('click', (e) => {
+        e.preventDefault(); // Prevent focus loss or other defaults
+        sendMsg();
+    });
+}
 
 if (msgInput) {
     msgInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendMsg();
+        if (e.key === 'Enter') {
+            e.preventDefault(); // Prevent newline in input
+            sendMsg();
+        }
     });
 }
 
@@ -246,7 +258,7 @@ if (emojiBtn && emojiPopup) {
 
     // 3. Close on outside click
     document.addEventListener('click', (e) => {
-        if (!emojiPopup.contains(e.target) && e.target !== emojiBtn) {
+        if (!emojiPopup.classList.contains('hidden') && !emojiPopup.contains(e.target) && !emojiBtn.contains(e.target)) {
             emojiPopup.classList.add('hidden');
         }
     });
@@ -254,14 +266,28 @@ if (emojiBtn && emojiPopup) {
 
 
 function sendMsg() {
-    const txt = document.getElementById('message-input').value.trim();
-    if (!txt || !currentRoomId) return;
+    const inputEl = document.getElementById('message-input');
+    const txt = inputEl.value.trim();
+
+    console.log('[DEBUG] Trying to send:', txt, 'Room:', currentRoomId);
+
+    if (!currentRoomId) {
+        alert('Error: Not joined to a room.');
+        return;
+    }
+    if (!txt) return;
 
     // We send MINIMAL meta, Server will inject authoritative Avatar
     // BUT we also send it from Client as a BACKUP in case Server memory is empty.
+    let userAvatar = null; // Ensure variable exists
+    try {
+        const sp = JSON.parse(localStorage.getItem('savedProfiles') || '{}');
+        userAvatar = sp[currentUser];
+    } catch (e) { }
+
     const meta = {
         nickname: currentUser,
-        avatar: userAvatar || null, // ✅ BACKUP: Send what we have
+        avatar: userAvatar || null,
         timestampOverride: settings.timeEnabled ? settings.timeValue : null
     };
 
